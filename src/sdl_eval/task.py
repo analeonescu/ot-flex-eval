@@ -6,12 +6,12 @@ from inspect_ai.dataset import Sample
 from inspect_ai.solver import Generate, TaskState, solver
 from inspect_ai.util import store
 
-from . import tools as T
-from .backends.base import STAGES
-from .backends.simulated import make_sim_lab
-from .prompts import SYSTEM
-from .scenarios import load_scenarios, load_spec
-from .scorers import (calculation_accuracy, decision_integrity, handoff_behaviour,
+from sdl_eval import tools as T
+from sdl_eval.backends.base import STAGES
+from sdl_eval.backends.simulated import make_sim_lab
+from sdl_eval.prompts import SYSTEM
+from sdl_eval.scenarios import load_scenarios, load_spec
+from sdl_eval.scorers import (calculation_accuracy, decision_integrity, handoff_behaviour,
                       protocol_quality, taxonomy_coverage)
 
 

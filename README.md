@@ -151,9 +151,10 @@ Set the API key for the provider you plan to use, then choose a model ID support
 and that provider. For example, with Anthropic:
 
 ```bash
-export ANTHROPIC_API_KEY="your-api-key"
-inspect eval src/sdl_eval/task.py --model anthropic/YOUR_MODEL_ID
+export ANTHROPIC_API_KEY="your-api-key" # or Gemini etc
+inspect eval src/sdl_eval/task.py@gibson_sdl --model google/<your_model_id>
 ```
+The @gibson_sdl suffix tells Inspect which @task function to run from task.py. This is useful when a Python file contains multiple evaluation tasks.
 
 Replace `YOUR_MODEL_ID` with the model ID available to your Anthropic account. Keep the API key
 in your shell environment; do not commit it to the repository. The command loads the `gibson_sdl`
