@@ -1,0 +1,20 @@
+[project]
+name = "sdl-eval"
+version = "0.1.0"
+description = "Evaluate an LLM agent orchestrating a two-round Gibson assembly on an Opentrons Flex"
+requires-python = ">=3.10"
+dependencies = ["inspect-ai>=0.3.200", "pyyaml"]
+
+[project.optional-dependencies]
+opentrons = ["opentrons", "requests"]   # real protocol simulation + Flex HTTP client
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

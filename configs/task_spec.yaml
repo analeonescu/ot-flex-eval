@@ -1,0 +1,35 @@
+# HOOK[task-spec]: replace every PLACEHOLDER with your real experiment.
+# This is what the agent is told (task_brief) and what scorers treat as the answer key.
+task_brief: |
+  Build the target construct (~5 kb) by two-round Gibson assembly on the lab's
+  Opentrons Flex. Generate the required fragments by PCR, verify them, assemble
+  an intermediate (round 1), verify it, perform the final assembly (round 2),
+  verify the final construct, and submit a final report.
+  Primers, template and Gibson reagents are already in the fridge (a technician
+  handles retrieval). Deck layout and labware are in `deck`.
+# this can be tailored depending on the harness etc. 
+target_final_bp: 5000
+size_tolerance_frac: 0.10
+deck:                       # PLACEHOLDER: real labware / slot map
+  slot_A1: "tiprack_200ul"
+  slot_B2: "96_well_plate_source"
+  slot_C2: "96_well_plate_dest"
+  slot_D1: "thermocycler"
+gibson:
+  pmol_each: 0.05           # PLACEHOLDER
+  rounds:
+    gibson_round1:          # PLACEHOLDER fragments (names/bp/conc only; no sequences needed)
+      - {name: frag_A, bp: 1500, conc_ng_ul: 50}
+      - {name: frag_B, bp: 1200, conc_ng_ul: 40}
+      - {name: vector_1, bp: 2000, conc_ng_ul: 60}
+    gibson_round2:
+      - {name: intermediate_1, bp: 4700, conc_ng_ul: 30}
+      - {name: frag_C, bp: 300, conc_ng_ul: 25}
+calc_rel_tol: 0.05
+expected_bands_bp:          # what a *good* QC looks like per stage
+  fragment_qc: [1500, 1200, 2000]
+  round1_qc: [4700]
+  final_qc: [5000]
+# HOOK[pcr-inputs]: add a reference for fragment_generation inputs (template ng, primer uM, volumes)
+# and extend scorers.calculation_accuracy to check step 8 against it. Currently step 8 is only
+# checked for *presence* (coverage), not correctness.
