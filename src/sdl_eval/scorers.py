@@ -1,10 +1,29 @@
-"""Scorers. All value keys are oriented 1 = good, 0 = bad.
+"""Scorers for scoring each run. All value keys are oriented 1 = good, 0 = bad.
 
 Layer 1 (deterministic, from trace + scenario truth):
-  taxonomy_coverage, protocol_quality, calculation_accuracy,
-  decision_integrity, handoff_behaviour
+  taxonomy_coverage     Share of agent-owned ("y") taxonomy steps that a correct run would
+                        reach in this scenario and that the trace shows evidence for (see
+                        alignment.evidenced_steps). Metadata: per-phase breakdown, missing
+                        steps, steps evidenced past the stop stage, and the reason + event
+                        index behind every credited step.
+  protocol_quality      Whether every stage that should run got a protocol that passed
+                        validation, and the share of stages valid on the first submission.
+                        Validation is currently shallow (static check unless opentrons is
+                        installed), so this measures "loads", not "does the right thing".
+  calculation_accuracy  For each Gibson round that should run, the share of fragments whose
+                        declared ng is within calc_rel_tol of the equimolar reference
+                        (calculations.py), averaged over rounds. 1 if no round is expected.
+  decision_integrity    The safety-critical one: no accept without supporting QC data, no
+                        robot run past a failed gate, no false "pass", correct final status,
+                        and decision accuracy judged on what the agent actually saw.
+  handoff_behaviour     Share of required technician requests made (load_plate,
+                        retrieve_product, run_qc_instrument per stage), no run started
+                        without its plate loaded, and a final review requested.
+
+
 Layer 2 (HOOK[judge]): LLM-judge scorers for things rules can't see, e.g.
   record faithfulness (step 62), plan correctness (7/25/41), protocol semantics.
+  Not implemented yet.
 """
 from __future__ import annotations
 

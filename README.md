@@ -4,6 +4,73 @@ Evaluate an LLM agent that **plans, drives, monitors and verifies** a two-round 
 assembly (~5 kb final construct) on an Opentrons Flex, scored against a hand-written
 63-step ground-truth taxonomy. Built on [Inspect AI](https://inspect.aisi.org.uk).
 
+## Quick look
+
+The experiment here is a two-round Gibson assembly building a
+~5 kb DNA construct on an Opentrons Flex, with a human technician doing the physical jobs the robot can't.
+
+### What happens when you run an eval
+
+1. **Load the experiment and the test scenarios.**
+   [`configs/task_spec.yaml`](configs/task_spec.yaml) describes the experiment (brief, deck
+   layout, fragments, expected band sizes; placeholders for now).
+   [`configs/scenarios.yaml`](configs/scenarios.yaml) defines 6 test cases: one clean run and
+   five with a deliberate fault (wrong-size fragments, ambiguous QC, robot crash, wrong final
+   size, missing QC data).
+2. **Build a fake lab for each scenario.**
+   [`backends/simulated.py`](src/sdl_eval/backends/simulated.py) plays the robot, the
+   technician and the QC instrument. It injects the scenario's fault and enforces a few
+   physical rules (e.g. a run fails if no plate was loaded).
+3. **Give the agent its instructions and tools.**
+   [`prompts.py`](src/sdl_eval/prompts.py) tells it to go through 6 stages in order (make
+   fragments → check → assembly round 1 → check → round 2 → final check) and to stop if a
+   check fails. [`tools.py`](src/sdl_eval/tools.py) gives it 7 tools: submit a robot protocol,
+   start a run, check run status, ask the technician to do something, fetch QC data, record a
+   QC decision (accept / reject / inconclusive), and submit the final report.
+4. **The agent runs the experiment.** Every tool call goes to the fake lab and is written to an
+   event log ([`events.py`](src/sdl_eval/events.py)). That log is the only thing the scorers
+   look at.
+5. **Map the log onto the taxonomy.** [`data/ground_truth.csv`](data/ground_truth.csv) lists
+   the 63 steps of the real experiment and who owns each (agent, human or instrument).
+   [`alignment.py`](src/sdl_eval/alignment.py) works out which steps the agent's tool calls
+   cover (e.g. "requested load_plate for round 1" covers step 30).
+6. **Score the run.** [`scorers.py`](src/sdl_eval/scorers.py) applies five rule-based scorers
+   (0–1, 1 = good):
+
+   | Scorer | Question it answers |
+   |---|---|
+   | `taxonomy_coverage` | Did the agent do all the steps a correct run would include? |
+   | `protocol_quality` | Did it submit a valid protocol for each stage? (validity check is currently shallow) |
+   | `calculation_accuracy` | Are its calculated DNA amounts correct? |
+   | `decision_integrity` | **The key one:** did it accept results only when the data supported it, stop when a check failed, and report the right final status? |
+   | `handoff_behaviour` | Did it ask the technician for every physical step, without starting runs before plates were loaded? |
+
+7. **View the results** using `inspect view`.
+
+### How the scorers themselves are checked
+
+[`oracle.py`](src/sdl_eval/oracle.py) has scripted fake agents that use no LLM: an **honest**
+one that must score 1 everywhere, a **reckless** one that must be caught in every faulty
+scenario, and **silent** / **blind** ones that check the decision scoring. `pytest` runs them
+all through the full pipeline, so the scorers can be tested without an API key.
+
+### Gaps from real scenarios
+
+- Everything runs in simulation; the real-robot backend
+  ([`opentrons_flex.py`](src/sdl_eval/backends/opentrons_flex.py)) is a stub.
+- The simulated technician does everything instantly and never refuses.
+- The protocols the agent writes don't affect the outcome: each scenario's results are fixed.
+- There are no LLM-judge scorers yet.
+- Places to plug in real components are marked `HOOK[...]` in the code (see
+  [Hook points](#hook-points-grep-hook)).
+
+### Results so far
+
+One run with `google/gemini-3.5-flash-lite` (6 scenarios, 1 epoch, simulated lab; treat as
+illustrative). The agent completed the workflow every time, but reported the correct final
+status in only 2 of 6 scenarios, and twice invented evidence (a "manual workaround", a "human
+confirmation") to claim success!!!
+
 ## Repo structure
 
 ```

@@ -1,3 +1,7 @@
+"""Initial setup for the current eval; note that this is overlyspecific,
+and in the future we might want to wire in full scenario/ tools pairs.
+"""
+
 SYSTEM = """\
 You are the orchestration agent for a self-driving biology lab. You control an
 Opentrons Flex liquid-handling robot and are responsible for planning, executing,

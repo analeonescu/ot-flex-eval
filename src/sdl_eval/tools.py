@@ -2,6 +2,9 @@
 
 Each call is logged as a `tool_call` event; sim ground truth is logged by the
 backend.  The full log is mirrored into the Inspect store so scorers can read it.
+
+The agent is given 7 tools: submit_protocol, start_run, get_run_status, 
+request_human_action, get_qc_data, submit_qc_results, and update_experiment_status.
 """
 from __future__ import annotations
 
