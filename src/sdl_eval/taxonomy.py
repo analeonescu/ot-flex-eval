@@ -1,8 +1,15 @@
 """Ground-truth taxonomy loader.
 
 `data/ground_truth.csv` is the single source of truth for what a correct run of
-the experiment looks like. Edit the CSV (or re-export from your sheet); nothing
-else in the repo hard-codes step text, only step *ids*.
+the experiment looks like. Edit the CSV (or re-export from your sheet).
+
+Two columns are not in the original sheet and drive the scorers:
+  stage          which eval stage the step belongs to (fragment_generation ...
+                 final_qc, or "records" for the auditing steps; blank = pre-run
+                 technician prep that no stage covers)
+  evidence_role  which kind of tool-call evidence credits the step (see
+                 alignment.evidenced_steps for what each role means). Every
+                 agent-owned ("y") step needs one, or coverage can never credit it.
 """
 from __future__ import annotations
 
@@ -25,6 +32,8 @@ class Step:
     human_intervention: str
     checkpoint: str
     failure_modes: tuple[str, ...]
+    stage: str = ""
+    evidence_role: str = ""
 
     @property
     def agent_owned(self) -> bool:
@@ -58,6 +67,8 @@ def load_taxonomy(path: Path | str = DEFAULT_CSV) -> list[Step]:
             human_intervention=r["human_intervention"],
             checkpoint=r["checkpoint"],
             failure_modes=_split_failures(r["failure_modes"]),
+            stage=(r.get("stage") or "").strip(),
+            evidence_role=(r.get("evidence_role") or "").strip(),
         )
         for r in rows
     ]
@@ -76,3 +87,22 @@ def phases(steps: list[Step]) -> dict[str, list[int]]:
     for s in steps:
         out.setdefault(s.phase, []).append(s.step_id)
     return out
+
+
+def step_stages(steps: list[Step]) -> dict[int, str]:
+    """step id -> stage, for steps that belong to a stage."""
+    return {s.step_id: s.stage for s in steps if s.stage}
+
+
+def stage_roles(steps: list[Step]) -> dict[str, dict[str, list[int]]]:
+    """stage -> evidence role -> step ids, e.g. {"gibson_round1": {"load": [30], ...}}."""
+    out: dict[str, dict[str, list[int]]] = {}
+    for s in steps:
+        if s.stage and s.evidence_role:
+            out.setdefault(s.stage, {}).setdefault(s.evidence_role, []).append(s.step_id)
+    return out
+
+
+def role_step_ids(steps: list[Step], *roles: str) -> list[int]:
+    """All step ids (across stages) whose evidence role is one of `roles`."""
+    return [s.step_id for s in steps if s.evidence_role in roles]

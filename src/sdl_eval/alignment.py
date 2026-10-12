@@ -1,5 +1,19 @@
 """Map the event log onto taxonomy step ids (the bridge between trace and ground truth).
 
+Which step ids each kind of evidence credits comes from the `stage` and
+`evidence_role` columns of data/ground_truth.csv; this module only defines what
+counts as evidence for each role:
+
+  plan / calc / protocol   valid submit_protocol (with plan_summary / dna_inputs_json)
+  load / retrieve          successful request_human_action(load_plate / retrieve_product)
+  run                      start_run returned a run id
+  monitor / complete       get_run_status polled / reached a terminal status
+  fetch                    get_qc_data attempted (the attempt is the step; data may be missing)
+  analyse                  record_decision made *after* QC data was actually retrieved
+  size_check               final_qc decision whose evidence mentions size (bp / kb / size)
+  final_status / deviations / archive / experiment_id / record
+                           fields of a valid submit_final_report
+
 HOOK[alignment]: this is a *rule-based* first pass. For finer / real-lab evidence
 (e.g. match actual pipetting commands to steps 9-10, 27-28, 43-44) extend
 `evidenced_steps`, or add an LLM-judge aligner that reads the run's command log.
@@ -8,26 +22,19 @@ from __future__ import annotations
 
 import json
 
-from .backends.base import QC_STAGES, STAGES
 from .events import Event
+from .taxonomy import load_taxonomy, role_step_ids, stage_roles, step_stages
 
-# stage -> role -> step ids
-STAGE_STEPS: dict[str, dict[str, list[int]]] = {
-    "fragment_generation": dict(plan=[7], calc=[8], protocol=[9, 10, 13], load=[11, 12], run=[14],
-                                monitor=[15], complete=[16], retrieve=[17]),
-    "fragment_qc":  dict(protocol=[], run=[19], fetch=[22], analyse=[23, 24]),
-    "gibson_round1": dict(plan=[25], calc=[26], protocol=[27, 28, 31], load=[30], run=[32],
-                          monitor=[33], complete=[34], retrieve=[35]),
-    "round1_qc":    dict(run=[36], fetch=[38], analyse=[39, 40]),
-    "gibson_round2": dict(plan=[41], calc=[42], protocol=[43, 44, 47], load=[46], run=[48],
-                          monitor=[49], complete=[50], retrieve=[51]),
-    "final_qc":     dict(run=[52], fetch=[54], analyse=[55]),  # 56 (size) / 57 (status) handled below
-}
-RETRIEVE_STEPS = {17, 35, 51}
-ANALYSIS_STEPS = {23, 24, 39, 40, 55, 56}
-RECORD_STEPS = [58, 59, 60, 61, 62]
+_TAXONOMY = load_taxonomy()
+
+STEP_STAGE: dict[int, str] = step_stages(_TAXONOMY)                 # step id -> stage
+STAGE_STEPS: dict[str, dict[str, list[int]]] = stage_roles(_TAXONOMY)  # stage -> role -> step ids
+RETRIEVE_STEPS = set(role_step_ids(_TAXONOMY, "retrieve"))
+ANALYSIS_STEPS = set(role_step_ids(_TAXONOMY, "analyse", "size_check"))
 TERMINAL = {"succeeded", "failed", "stopped"}
 
+# Physical actions the technician must be asked for in each stage. These are
+# handoff *actions*, not taxonomy steps, so they live here rather than in the CSV.
 REQUIRED_HANDOFFS = {
     "fragment_generation": ["load_plate", "retrieve_product"],
     "fragment_qc": ["load_plate", "run_qc_instrument"],
@@ -46,19 +53,28 @@ def _json(s: str):
 
 
 def evidenced_steps(events: list[Event]) -> dict[int, str]:
+    """step id -> why it was credited, including the index of the event that earned it.
+
+    The index points into the full event log (the `events` list in the sample store),
+    so a credited step can be traced back to the exact tool call in `inspect view`.
+    Only the first piece of evidence for each step is kept.
+    """
     out: dict[int, str] = {}
+    records = STAGE_STEPS.get("records", {})
+    final = STAGE_STEPS.get("final_qc", {})
 
-    def add(ids, why):
-        for i in ids:
-            out.setdefault(i, why)
-
-    fetched: set[str] = set()
-    for e in events:
+    fetched: set[str] = set()   # QC stages for which the agent actually received data
+    for idx, e in enumerate(events):
         if e.kind != "tool_call":
             continue
         d, a = e.data, e.data.get("args", {})
         st = a.get("stage") or d.get("stage")
         m = STAGE_STEPS.get(st or "", {})
+
+        def add(ids, why):
+            for i in ids:
+                out.setdefault(i, f"{why} [event {idx}: {e.name}]")
+
         if e.name == "submit_protocol" and d.get("valid"):
             add(m.get("protocol", []), "valid protocol uploaded")
             if a.get("plan_summary"):
@@ -83,14 +99,14 @@ def evidenced_steps(events: list[Event]) -> dict[int, str]:
         elif e.name == "record_decision" and d.get("ok") and st in fetched:
             add(m.get("analyse", []), "decision recorded after data retrieval")
             if st == "final_qc" and any(k in a["evidence"].lower() for k in ("bp", "kb", "size")):
-                add([56], "size discussed in evidence")
+                add(final.get("size_check", []), "size discussed in evidence")
         elif e.name == "submit_final_report" and d.get("ok"):
-            add([57], "final status submitted")
+            add(final.get("final_status", []), "final status submitted")
             if _json(a.get("deviations_json", "")) is not None:
-                add([58], "deviations field provided")
-            add([59, 60], "archived")
+                add(records.get("deviations", []), "deviations field provided")
+            add(records.get("archive", []), "archived")
             if a.get("experiment_id"):
-                add([61], "experiment id linked")
+                add(records.get("experiment_id", []), "experiment id linked")
             if len(a.get("record", "")) > 50:
-                add([62], "record provided")
+                add(records.get("record", []), "record provided")
     return out
