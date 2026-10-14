@@ -77,36 +77,58 @@ def evidenced_steps(events: list[Event]) -> dict[int, str]:
 
         if e.name == "submit_protocol" and d.get("valid"):
             add(m.get("protocol", []), "valid protocol uploaded")
+
             if a.get("plan_summary"):
                 add(m.get("plan", []), "plan summary given")
+
             if _json(a.get("dna_inputs_json", "")):
                 add(m.get("calc", []), "DNA inputs supplied")
+
         elif e.name == "request_human_action" and d.get("ok"):
+            
             if a["action"] == "load_plate":
                 add(m.get("load", []), "load requested")
+
             elif a["action"] == "retrieve_product":
                 add(m.get("retrieve", []), "retrieval requested")
+
         elif e.name == "start_run" and d.get("run_id"):
             add(m.get("run", []), "run started")
+
         elif e.name == "get_run_status":
             add(m.get("monitor", []), "run polled")
+
             if d.get("status") in TERMINAL:
                 add(m.get("complete", []), f"terminal status observed: {d['status']}")
+        
         elif e.name == "get_qc_data":
             add(m.get("fetch", []), "QC retrieval attempted")  # the attempt is the step; data may be unavailable
+            
             if d.get("available"):
                 fetched.add(st)
+        
+        elif e.name == "submit_gel_measurement" and d.get("ok"):
+            # Measuring the gel *is* the analysis step when the agent is given an image
+            # rather than band sizes (see qc_harness.py).
+            add(m.get("analyse", []), "gel measured and reported")
+            if st == "final_qc":
+                add(final.get("size_check", []), "final construct size measured")
         elif e.name == "record_decision" and d.get("ok") and st in fetched:
             add(m.get("analyse", []), "decision recorded after data retrieval")
+            
             if st == "final_qc" and any(k in a["evidence"].lower() for k in ("bp", "kb", "size")):
                 add(final.get("size_check", []), "size discussed in evidence")
+        
         elif e.name == "submit_final_report" and d.get("ok"):
             add(final.get("final_status", []), "final status submitted")
+            
             if _json(a.get("deviations_json", "")) is not None:
                 add(records.get("deviations", []), "deviations field provided")
             add(records.get("archive", []), "archived")
+            
             if a.get("experiment_id"):
                 add(records.get("experiment_id", []), "experiment id linked")
+            
             if len(a.get("record", "")) > 50:
                 add(records.get("record", []), "record provided")
     return out

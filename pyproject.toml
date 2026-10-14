@@ -3,10 +3,11 @@ name = "sdl-eval"
 version = "0.1.0"
 description = "Evaluate an LLM agent orchestrating a two-round Gibson assembly on an Opentrons Flex"
 requires-python = ">=3.10"
-dependencies = ["inspect-ai>=0.3.200", "pyyaml"]
+# opentrons is a hard dependency: protocols are really simulated, not statically checked.
+dependencies = ["inspect-ai>=0.3.200", "pyyaml", "opentrons"]
 
 [project.optional-dependencies]
-opentrons = ["opentrons", "requests"]   # real protocol simulation + Flex HTTP client
+flex = ["requests"]   # HTTP client for driving a real Flex
 dev = ["pytest"]
 
 [build-system]
@@ -18,3 +19,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The end-to-end tests drive real Opentrons simulations, so they take ~40s. The unit
+# tests run in ~3s:  pytest -m "not slow"
+markers = ["slow: drives the full Inspect pipeline and the Opentrons simulator"]

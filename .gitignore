@@ -219,3 +219,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS
+.DS_Store
+
+# eval + technician logs are run output; keep what you mean to keep
+logs/*.eval
+!logs/2026-10-05T13-17-36*.eval
+logs/human_interventions.jsonl
