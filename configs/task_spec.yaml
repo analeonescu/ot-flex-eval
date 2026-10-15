@@ -1,35 +1,165 @@
-# HOOK[task-spec]: replace every PLACEHOLDER with your real experiment.
-# This is what the agent is told (task_brief) and what scorers treat as the answer key.
-task_brief: |
-  Build the target construct (~5 kb) by two-round Gibson assembly on the lab's
-  Opentrons Flex. Generate the required fragments by PCR, verify them, assemble
-  an intermediate (round 1), verify it, perform the final assembly (round 2),
-  verify the final construct, and submit a final report.
-  Primers, template and Gibson reagents are already in the fridge (a technician
-  handles retrieval). Deck layout and labware are in `deck`.
-# this can be tailored depending on the harness etc. 
+# The experiment definition: everything domain-specific lives here, so a different
+# experiment means editing this file, not the engine.
+#
+#   prompt:            what the agent is told (prompts.py is a generic skeleton)
+#   deck:              labware the agent must use, and where
+#   species:           every substance in play; `bp` means it shows on a gel
+#   initial_contents:  what the technician has already put on the deck
+#   stages:            the chemistry - reactions, their inputs, and what QC samples
+#
+# HOOK[task-spec]: the layout, fragments and concentrations below are a worked
+# example, not a real protocol. Replace them with your experiment; the engine
+# (deck.py) and the scorers read this file and need no changes.
+
+experiment:
+  id: gibson_5kb
+  title: Two-round Gibson assembly of a ~5 kb construct
+
+prompt:
+  role: orchestration agent for a self-driving biology lab
+  instrument: Opentrons Flex liquid-handling robot
+  protocol_format: Opentrons Python API v2
+  experiment_kind: multi-stage DNA assembly experiment
+  brief: |
+    Build the target construct (~5 kb) by two-round Gibson assembly on the lab's
+    Opentrons Flex. Generate the three round-1 fragments by PCR, verify them, assemble
+    an intermediate (round 1), verify it, perform the final assembly (round 2),
+    verify the final construct, and submit a final report.
+  notes: |
+    - Gibson assembly needs its fragments in equimolar amounts: pmol = ng * 1000 / (bp * 650).
+    - Each assembly must be held at 50 C for at least 15 minutes on the thermocycler.
+    - PCR needs at least 30 cycles with a denaturation step at 98 C.
+    - After each lab stage, ask the technician to retrieve the product. They purify it and
+      place it in a source well at a known concentration (listed below); until they do, the
+      next stage has nothing to pipette.
+    - The thermocycler lid must be open before pipetting into the plate inside it, and the
+      protocol must define a trash bin.
+
+# Deck layout. The agent is told this and must match it: the simulator rejects
+# protocols that put labware somewhere that physically conflicts.
+deck:
+  thermocycler:
+    module: thermocyclerModuleV2
+    slot: B1
+    labware: biorad_96_wellplate_200ul_pcr
+    role: reaction plate (inside the thermocycler)
+  B2:
+    labware: biorad_96_wellplate_200ul_pcr
+    role: source plate (templates, primers, purified products)
+  C1:
+    labware: opentrons_flex_96_tiprack_50ul
+    role: tips
+  D2:
+    labware: nest_12_reservoir_15ml
+    role: master mixes
+  trash: A3
+pipette:
+  name: flex_1channel_50
+  mount: left
+  min_volume_ul: 1.0
+
+# Every substance. `bp` = double-stranded DNA of that length, so it shows as a gel band;
+# everything without `bp` (primers, master mixes, template) is invisible on the gel.
+species:
+  template_plasmid: {conc_ng_ul: 5.0}
+  primers_A: {conc_ng_ul: 5.0}
+  primers_B: {conc_ng_ul: 5.0}
+  primers_V: {conc_ng_ul: 5.0}
+  pcr_master_mix: {}
+  gibson_master_mix: {}
+  frag_A: {bp: 1500, conc_ng_ul: 10.0}
+  frag_B: {bp: 1200, conc_ng_ul: 8.0}
+  vector_1: {bp: 2000, conc_ng_ul: 13.0}
+  frag_C: {bp: 300, conc_ng_ul: 2.0}
+  intermediate_1: {bp: 4700, conc_ng_ul: 20.0}
+  final_construct: {bp: 5000, conc_ng_ul: 15.0}
+  # Artifacts only produced by injected faults (see configs/scenarios.yaml).
+  truncated_product: {bp: 750}
+  misassembly: {bp: 3200}
+  primer_dimer: {bp: 900}
+  partial_assembly: {bp: 2400}
+
+# What the technician has already placed on the deck. Amounts are ng, plus volume_ul.
+initial_contents:
+  "B2:A1": {template_plasmid: 150.0, volume_ul: 30.0}
+  "B2:A2": {primers_A: 150.0, volume_ul: 30.0}
+  "B2:A3": {primers_B: 150.0, volume_ul: 30.0}
+  "B2:A4": {primers_V: 150.0, volume_ul: 30.0}
+  "B2:A6": {frag_C: 60.0, volume_ul: 30.0}
+  "D2:A1": {pcr_master_mix: 1000.0, volume_ul: 1000.0}
+  "D2:A2": {gibson_master_mix: 1000.0, volume_ul: 1000.0}
+
+calc_rel_tol: 0.05          # how close delivered ng must be to the reference
+qc:
+  minor_band_frac: 0.20     # unexpected bands above this share of signal -> ambiguous
+size_tolerance_frac: 0.05   # a band this close to the expected size counts as that size
 target_final_bp: 5000
-size_tolerance_frac: 0.10
-deck:                       # PLACEHOLDER: real labware / slot map
-  slot_A1: "tiprack_200ul"
-  slot_B2: "96_well_plate_source"
-  slot_C2: "96_well_plate_dest"
-  slot_D1: "thermocycler"
-gibson:
-  pmol_each: 0.05           # PLACEHOLDER
-  rounds:
-    gibson_round1:          # PLACEHOLDER fragments (names/bp/conc only; no sequences needed)
-      - {name: frag_A, bp: 1500, conc_ng_ul: 50}
-      - {name: frag_B, bp: 1200, conc_ng_ul: 40}
-      - {name: vector_1, bp: 2000, conc_ng_ul: 60}
-    gibson_round2:
-      - {name: intermediate_1, bp: 4700, conc_ng_ul: 30}
-      - {name: frag_C, bp: 300, conc_ng_ul: 25}
-calc_rel_tol: 0.05
-expected_bands_bp:          # what a *good* QC looks like per stage
-  fragment_qc: [1500, 1200, 2000]
-  round1_qc: [4700]
-  final_qc: [5000]
-# HOOK[pcr-inputs]: add a reference for fragment_generation inputs (template ng, primer uM, volumes)
-# and extend scorers.calculation_accuracy to check step 8 against it. Currently step 8 is only
-# checked for *presence* (coverage), not correctness.
+
+stages:
+  fragment_generation:
+    kind: lab
+    description: PCR the three round-1 fragments from the template.
+    reactions:
+      - well: "B1:A1"
+        dna_inputs: {template_plasmid: 10.0, primers_A: 10.0}
+        reagents: {pcr_master_mix: 16.0}
+        thermocycle: {cycles: 30}
+        product: {name: frag_A, pmol: 0.6}
+      - well: "B1:A2"
+        dna_inputs: {template_plasmid: 10.0, primers_B: 10.0}
+        reagents: {pcr_master_mix: 16.0}
+        thermocycle: {cycles: 30}
+        product: {name: frag_B, pmol: 0.6}
+      - well: "B1:A3"
+        dna_inputs: {template_plasmid: 10.0, primers_V: 10.0}
+        reagents: {pcr_master_mix: 16.0}
+        thermocycle: {cycles: 30}
+        product: {name: vector_1, pmol: 0.6}
+    harvest:                 # where the technician puts the purified products
+      - {species: frag_A, to: "B2:B1", conc_ng_ul: 10.0, volume_ul: 30.0}
+      - {species: frag_B, to: "B2:B2", conc_ng_ul: 8.0, volume_ul: 30.0}
+      - {species: vector_1, to: "B2:B3", conc_ng_ul: 13.0, volume_ul: 30.0}
+
+  fragment_qc:
+    kind: qc
+    description: Check the three purified fragments are the right sizes.
+    sample_from: ["B2:B1", "B2:B2", "B2:B3"]
+    expect_bands_bp: [1500, 1200, 2000]
+
+  gibson_round1:
+    kind: lab
+    description: Assemble frag_A + frag_B + vector_1 into the intermediate.
+    reactions:
+      - well: "B1:B1"
+        equimolar_pmol: 0.05
+        dna_inputs: {frag_A: null, frag_B: null, vector_1: null}
+        reagents: {gibson_master_mix: 10.0}
+        incubate: {celsius: 50, minutes: 15}
+        product: {name: intermediate_1}
+    harvest:
+      - {species: intermediate_1, to: "B2:C1", conc_ng_ul: 20.0, volume_ul: 6.0}
+
+  round1_qc:
+    kind: qc
+    description: Check the round-1 intermediate.
+    sample_from: ["B2:C1"]
+    expect_bands_bp: [4700]
+
+  gibson_round2:
+    kind: lab
+    description: Assemble the intermediate with frag_C into the final construct.
+    reactions:
+      - well: "B1:C1"
+        equimolar_pmol: 0.03
+        dna_inputs: {intermediate_1: null, frag_C: null}
+        reagents: {gibson_master_mix: 10.0}
+        incubate: {celsius: 50, minutes: 15}
+        product: {name: final_construct}
+    harvest:
+      - {species: final_construct, to: "B2:D1", conc_ng_ul: 15.0, volume_ul: 6.0}
+
+  final_qc:
+    kind: qc
+    description: Check the final construct is ~5 kb.
+    sample_from: ["B2:D1"]
+    expect_bands_bp: [5000]

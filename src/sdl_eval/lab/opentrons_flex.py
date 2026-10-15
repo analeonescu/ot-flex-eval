@@ -6,7 +6,7 @@ own docs at http://<robot-ip>:31950/openapi before relying on them.
 """
 from __future__ import annotations
 
-from .base import RunState, ValidationResult
+from sdl_eval.lab.base import RunState, ValidationResult
 
 
 class OpentronsFlexRobot:

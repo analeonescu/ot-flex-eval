@@ -10,16 +10,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ..events import EventLog
+from sdl_eval.trace.events import EventLog
+from sdl_eval.spec.scenarios import load_spec, stage_ids, stages_of_kind
 
-STAGES = [
-    "fragment_generation", "fragment_qc",
-    "gibson_round1", "round1_qc",
-    "gibson_round2", "final_qc",
-]
-LAB_STAGES = ["fragment_generation", "gibson_round1", "gibson_round2"]
-QC_STAGES = ["fragment_qc", "round1_qc", "final_qc"]
-HUMAN_ACTIONS = ["load_plate", "retrieve_product", "run_qc_instrument", "approve", "review"]
+# The stage list is the experiment's, not the engine's: it comes from the `stages`
+# section of configs/task_spec.yaml, in the order that file lists them.
+_SPEC = load_spec()
+STAGES = stage_ids(_SPEC)
+LAB_STAGES = stages_of_kind(_SPEC, "lab")
+QC_STAGES = stages_of_kind(_SPEC, "qc")
+#: Physical steps the robot cannot do at all, so they are the technician's by default.
+#: Skipping one does not just lose a point - the lab state never changes, and the next
+#: stage has nothing to work with.
+HUMAN_ONLY_ACTIONS = ["load_plate", "retrieve_product", "run_qc_instrument",
+                      "photograph_gel"]
+
+#: Available at any point in any stage, for when something has gone wrong. These are how
+#: the agent hands a judgement call back to a person instead of deciding alone.
+INTERVENTION_ACTIONS = ["replace_plate", "continue_as_is", "approve", "review"]
+
+HUMAN_ACTIONS = HUMAN_ONLY_ACTIONS + INTERVENTION_ACTIONS
 
 
 @dataclass
@@ -35,6 +45,9 @@ class RunState:
     run_id: str
     status: str  # "idle" | "running" | "succeeded" | "failed" | "stopped"
     log: list[str] = field(default_factory=list)
+    #: True when the robot refused to start at all, rather than starting and failing.
+    #: The stage is left exactly as it was, so this is not evidence that it went wrong.
+    blocked: bool = False
 
 
 @dataclass
@@ -58,7 +71,9 @@ class Robot(Protocol):
 
 
 class HumanChannel(Protocol):
-    def request(self, action: str, stage: str, details: str) -> HumanResponse: ...
+    # Async because a real technician is slow and an LLM judge has to read their report
+    # (see human_cli.py); the scripted technician just returns immediately.
+    async def request(self, action: str, stage: str, details: str) -> HumanResponse: ...
 
 
 class QCSource(Protocol):
