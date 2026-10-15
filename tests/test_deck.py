@@ -6,8 +6,8 @@ simulated protocols.
 """
 import pytest
 
-from sdl_eval.deck import DETECTION_NG, Deck
-from sdl_eval.protocol_run import Transfer
+from sdl_eval.lab.deck import DETECTION_NG, Deck
+from sdl_eval.lab.protocol_run import Transfer
 
 SPEC = {
     "calc_rel_tol": 0.05,

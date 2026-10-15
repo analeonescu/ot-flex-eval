@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from .taxonomy import ROOT
+from sdl_eval.spec.taxonomy import ROOT
 
 SCENARIOS_YAML = ROOT / "configs" / "scenarios.yaml"
 SPEC_YAML = ROOT / "configs" / "task_spec.yaml"

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .calculations import ng_from_pmol, pmol_from_ng, within
+from sdl_eval.lab.calculations import ng_from_pmol, pmol_from_ng, within
 
 #: A species below this many ng is invisible on a gel (and counts as "not added").
 DETECTION_NG = 1.0
@@ -74,6 +74,20 @@ class Deck:
 
     def contents(self, key: str) -> dict[str, float]:
         return {n: round(ng, 2) for n, ng in self.well(key).species.items() if ng > 1e-6}
+
+    def reset_stage(self, stage: str) -> list[str]:
+        """Empty the wells a stage uses, as swapping in fresh labware would.
+
+        Covers the reaction wells and the tubes its product is harvested into, so a
+        re-run starts from the same state the first run did instead of pipetting on
+        top of the last attempt. Returns the wells it cleared.
+        """
+        cfg = self.spec["stages"].get(stage, {})
+        keys = [r["well"] for r in cfg.get("reactions", [])]
+        keys += [h["to"] for h in cfg.get("harvest", [])]
+        for key in keys:
+            self.wells[key] = Well()
+        return keys
 
     # ----------------------------------------------------------------- transfers
     def apply_transfers(self, transfers) -> list[str]:

@@ -10,9 +10,9 @@ import json
 import pytest
 from inspect_ai.model import ModelOutput, get_model
 
-from sdl_eval.backends.simulated import SimulatedLab, make_sim_lab
-from sdl_eval.human_cli import CliTechnician, Interpretation, InterventionLog, parse_judgement
-from sdl_eval.scenarios import load_scenarios, load_spec
+from sdl_eval.lab.simulated import SimulatedLab, make_sim_lab
+from sdl_eval.trace.human_cli import CliTechnician, Interpretation, InterventionLog, parse_judgement
+from sdl_eval.spec.scenarios import load_scenarios, load_spec
 
 EFFECTS = SimulatedLab.EFFECTS
 SPEC = load_spec()

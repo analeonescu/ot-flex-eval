@@ -15,17 +15,17 @@ grep -rn "HOOK\[" src configs
 | Hook | Where | What you plug in |
 |---|---|---|
 | `HOOK[task-spec]` | `configs/task_spec.yaml` | The whole experiment: brief, deck and labware, substances with their sizes and concentrations, the reactions and their conditions, expected bands per QC stage. The worked example there is **not a real protocol**. |
-| `HOOK[calc]` | `deck.Deck.required_ng` | An amount rule other than plain equimolar: vector-to-insert ratios, total-DNA caps, a minimum pipettable volume. |
-| `HOOK[flex-http]` | `backends/opentrons_flex.py` | The real robot: upload a protocol, create and play a run, poll status and commands. The endpoints are sketched; check them against your robot's `/openapi`. |
-| `HOOK[validate]` | `backends/opentrons_flex.py` | Validation against the real robot's analysis endpoint. The simulated lab already uses `opentrons.simulate`, so this is only needed for hardware. |
-| `HOOK[safety]` | `backends/opentrons_flex.py`, `start_run` | Approval and emergency-stop policy, before anything physical moves. |
+| `HOOK[calc]` | `lab.deck.Deck.required_ng` | An amount rule other than plain equimolar: vector-to-insert ratios, total-DNA caps, a minimum pipettable volume. |
+| `HOOK[flex-http]` | `lab/opentrons_flex.py` | The real robot: upload a protocol, create and play a run, poll status and commands. The endpoints are sketched; check them against your robot's `/openapi`. |
+| `HOOK[validate]` | `lab/opentrons_flex.py` | Validation against the real robot's analysis endpoint. The simulated lab already uses `opentrons.simulate`, so this is only needed for hardware. |
+| `HOOK[safety]` | `lab/opentrons_flex.py`, `start_run` | Approval and emergency-stop policy, before anything physical moves. |
 | `HOOK[real-lab]` | `task.py`, `build_lab` | Assemble `Lab(robot, human, qc)` for `-T backend=flex`. |
-| `HOOK[human-model]` | `backends/simulated.py` | A simulated technician who is slow, makes mistakes, or refuses. |
-| `HOOK[records]` | `tools.py`, `backends/base.py` (`Lab.archive`) | Writes to a LIMS or data system, for taxonomy steps 59-61. |
-| `HOOK[alignment]` | `alignment.py` | A finer trace-to-step mapping, for example matching individual pipetting commands to steps 9-10, 27-28 and 43-44, or an LLM aligner. |
-| `HOOK[judge]` | `scorers.py` | LLM-judge scorers. |
-| `HumanChannel` | `backends/base.py` | A real technician interface, such as a Slack or web prompt that blocks until they respond. `human_cli.py` is one implementation. |
-| `QCSource` | `backends/base.py` | A reader for your QC instrument (gel, fragment analyser, sequencing) returning band sizes in bp. |
+| `HOOK[human-model]` | `lab/simulated.py` | A simulated technician who is slow, makes mistakes, or refuses. |
+| `HOOK[records]` | `trace/tools.py`, `lab/base.py` (`Lab.archive`) | Writes to a LIMS or data system, for taxonomy steps 59-61. |
+| `HOOK[alignment]` | `score/alignment.py` | A finer trace-to-step mapping, for example matching individual pipetting commands to steps 9-10, 27-28 and 43-44, or an LLM aligner. |
+| `HOOK[judge]` | `score/scorers.py` | LLM-judge scorers. |
+| `HumanChannel` | `lab/base.py` | A real technician interface, such as a Slack or web prompt that blocks until they respond. `trace/human_cli.py` is one implementation. |
+| `QCSource` | `lab/base.py` | A reader for your QC instrument (gel, fragment analyser, sequencing) returning band sizes in bp. |
 
 ## Changing the experiment
 
@@ -33,7 +33,7 @@ Everything specific to this experiment lives in `configs/task_spec.yaml`: the de
 every substance and its concentration, each reaction with its inputs and conditions, the
 QC stages and their expected bands, and the prompt text.
 
-`prompts.py` is a skeleton with no Gibson-specific wording, and the stage list is read
+`spec/prompts.py` is a skeleton with no Gibson-specific wording, and the stage list is read
 from the spec, so a different experiment is a different spec file rather than a code
 change. Two things to keep in mind:
 
@@ -48,7 +48,7 @@ change. Two things to keep in mind:
 
 In order:
 
-1. Implement `backends/opentrons_flex.py` against your robot's HTTP API.
+1. Implement `lab/opentrons_flex.py` against your robot's HTTP API.
 2. Implement a human channel and a QC source for your instruments.
 3. Wire them together in `task.py` (`HOOK[real-lab]`).
 4. Replace `configs/task_spec.yaml` with the real experiment.

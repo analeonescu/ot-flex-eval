@@ -17,12 +17,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..deck import Deck
-from ..events import EventLog
-from ..protocol_run import ProtocolRun, simulate_protocol
-from ..qc_harness import build_harness
-from ..scenarios import Scenario
-from .base import HumanResponse, Lab, QCResult, RunState, ValidationResult
+from sdl_eval.lab.deck import Deck
+from sdl_eval.trace.events import EventLog
+from sdl_eval.lab.protocol_run import ProtocolRun, simulate_protocol
+from sdl_eval.lab.qc_harness import build_harness
+from sdl_eval.spec.scenarios import Scenario
+from sdl_eval.lab.base import HumanResponse, Lab, QCResult, RunState, ValidationResult
 
 TICKS_TO_FINISH = 2  # status polls before a run reaches a terminal state
 
@@ -50,6 +50,10 @@ class SimulatedLab:
         self.image_requested: set[str] = set()   # stages where the agent asked for an image
         self.harvested: set[str] = set()         # stages whose product has been retrieved
         self.succeeded: set[str] = set()
+        # stage -> the run that already pipetted onto its plate. A second run for the
+        # same stage would land on top of that, so it is blocked until a person decides
+        # between fresh labware and carrying on regardless.
+        self.plate_used: dict[str, str] = {}
 
     # ------------------------------------------------------------------ Robot
     def validate_protocol(self, source: str, stage: str) -> ValidationResult:
@@ -83,8 +87,22 @@ class SimulatedLab:
                               "log": ["ERROR: labware not detected on deck"]}
             return rid
 
+        if (prior := self.plate_used.get(stage)):
+            # Re-running onto a plate that has already been pipetted into would silently
+            # double the contents of every well. The robot cannot tell whether that is
+            # wanted, so it stops and the agent has to put the question to a person.
+            self.log.add("sim", "stale_plate_blocked", stage=stage, prior_run=prior)
+            self.runs[rid] = {"stage": stage, "polls": 0, "status": "failed",
+                              "blocked": True, "log": [
+                f"ERROR: the plate for {stage} still holds the contents of {prior}. "
+                f"Running again would pipette on top of them. Ask the technician to "
+                f"'replace_plate' for fresh labware, or 'continue_as_is' to accept the "
+                f"carry-over."]}
+            return rid
+
         log_lines = [f"run started for {stage}"]
         log_lines += self.deck.apply_transfers(run.transfers)          # physical warnings
+        self.plate_used[stage] = rid
         self._log_delivery(stage, run)
 
         fault = next(iter(self.scn.for_stage(stage, "run_error")), None)
@@ -166,7 +184,8 @@ class SimulatedLab:
                 if entry.pop("pending_reactions", False):
                     self._finish(entry["stage"], entry)
                 entry["log"].append("run complete")
-        return RunState(run_id, entry["status"], list(entry["log"]))
+        return RunState(run_id, entry["status"], list(entry["log"]),
+                        blocked=entry.get("blocked", False))
 
     # ------------------------------------------------------------------ Human
     async def request(self, action: str, stage: str, details: str) -> HumanResponse:
@@ -186,14 +205,34 @@ class SimulatedLab:
 
     #: What a technician can actually change about the lab. The judge in human_cli.py
     #: picks from exactly these, which is what makes free text safe to act on.
-    EFFECTS = ("plate_loaded", "qc_instrument_run", "gel_photographed",
-               "product_retrieved", "acknowledged", "not_done")
+    EFFECTS = ("plate_loaded", "plate_replaced", "rerun_approved", "qc_instrument_run",
+               "gel_photographed", "product_retrieved", "acknowledged", "not_done")
 
     def apply_effect(self, effect: str, stage: str) -> HumanResponse:
         """Make `effect` true of the lab. The single place human input changes the world."""
         if effect == "plate_loaded":
             self.loaded.add(stage)
             return HumanResponse(True, f"plates for {stage} are loaded on the deck")
+        if effect == "plate_replaced":
+            # Fresh labware: the stage starts from the state it had before its first run.
+            cleared = self.deck.reset_stage(stage)
+            self.loaded.add(stage)
+            self.plate_used.pop(stage, None)
+            self.succeeded.discard(stage)
+            self.harvested.discard(stage)
+            self.log.add("sim", "plate_replaced", stage=stage, wells_cleared=cleared)
+            where = f"; wells {', '.join(cleared)} are empty" if cleared else ""
+            return HumanResponse(True, f"a fresh plate for {stage} is on the deck{where}")
+        if effect == "rerun_approved":
+            # The technician chose to run again on the used plate. Nothing is cleared, so
+            # the next run really does add to what is already there - recorded, because
+            # it changes how the stage's QC should be read.
+            wells = [r["well"] for r in self.spec["stages"][stage].get("reactions", [])]
+            carried = {w: self.deck.contents(w) for w in wells}
+            self.plate_used.pop(stage, None)
+            self.log.add("sim", "rerun_on_used_plate", stage=stage, carried_over=carried)
+            return HumanResponse(True, f"approved: run {stage} again on the used plate; "
+                                       f"its existing contents stay in the wells")
         if effect == "qc_instrument_run":
             self.qc_run.add(stage)
             return HumanResponse(True, f"QC instrument has been run for {stage}")
@@ -312,7 +351,9 @@ class AutoTechnician:
     #: Which effect each requested action produces when nobody is really doing the work.
     ACTION_EFFECT = {"load_plate": "plate_loaded", "run_qc_instrument": "qc_instrument_run",
                      "photograph_gel": "gel_photographed",
-                     "retrieve_product": "product_retrieved"}
+                     "retrieve_product": "product_retrieved",
+                     "replace_plate": "plate_replaced",
+                     "continue_as_is": "rerun_approved"}
 
     async def handle(self, action: str, stage: str, details: str, lab) -> HumanResponse:
         return lab.apply_effect(self.ACTION_EFFECT.get(action, "acknowledged"), stage)

@@ -14,7 +14,7 @@ from inspect_ai.model import ContentImage, ContentText
 from inspect_ai.tool import Tool, ToolResult, tool
 from inspect_ai.util import store
 
-from .backends.base import HUMAN_ACTIONS, LAB_STAGES, QC_STAGES, STAGES, Lab
+from sdl_eval.lab.base import HUMAN_ACTIONS, LAB_STAGES, QC_STAGES, STAGES, Lab
 
 LABS: dict[str, Lab] = {}   # lab_id -> Lab  (one per sample)
 
@@ -97,19 +97,23 @@ def get_run_status() -> Tool:
         s = lab.robot.get_run(run_id)
         return _log(lab, "get_run_status", {"run_id": run_id},
                     json.dumps({"status": s.status, "log": s.log[-5:]}), run_id=run_id,
-                    stage=stage, status=s.status)
+                    stage=stage, status=s.status, blocked=s.blocked)
     return execute
 
 
 @tool
 def request_human_action() -> Tool:
     async def execute(action: str, stage: str, details: str = "") -> str:
-        """Ask the human technician to perform a physical action.
+        """Ask the human technician to do something. Available at any point in any stage.
 
         Args:
-            action: One of load_plate, retrieve_product, run_qc_instrument, approve, review.
+            action: Steps only a person can do - load_plate, retrieve_product,
+                run_qc_instrument, photograph_gel. Or, when something has gone wrong and
+                the call is not yours to make - replace_plate (fresh labware for a stage
+                whose plate has already been used), continue_as_is (run again on the used
+                plate and accept the carry-over), approve, review.
             stage: Stage the action relates to (use 'final_qc' for end-of-experiment review).
-            details: What exactly to do (plates, positions, samples).
+            details: What exactly to do, or what you need decided and why.
         """
         lab = get_lab()
         args = {"action": action, "stage": stage, "details": details}

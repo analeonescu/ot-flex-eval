@@ -1,7 +1,21 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
+
+# `inspect eval src/sdl_eval/task.py` loads this file by path rather than importing the
+# package, so `import sdl_eval` below only works if src/ is on sys.path. Put it there
+# ourselves rather than depending on an editable install: on macOS the .pth file such an
+# install writes can pick up the "hidden" flag, which Python 3.11+ silently ignores, and
+# then the package is installed but not importable.
+#
+# Unconditional on purpose. Inspect gives the module a synthetic __package__ (the file
+# path), so guarding on __package__ being unset does not work, and when the package *is*
+# importable this is a no-op.
+_SRC = str(Path(__file__).resolve().parents[1])
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
 from inspect_ai import Task, task
 from inspect_ai.agent import as_solver, react
@@ -9,13 +23,13 @@ from inspect_ai.dataset import Sample
 from inspect_ai.solver import Generate, TaskState, solver
 from inspect_ai.util import store
 
-from sdl_eval import tools as T
-from sdl_eval.backends.base import STAGES
-from sdl_eval.backends.simulated import make_sim_lab
-from sdl_eval.prompts import build_system_prompt
-from sdl_eval.qc_harness import build_harness
-from sdl_eval.scenarios import load_scenarios, load_spec
-from sdl_eval.scorers import (calculation_accuracy, decision_integrity, handoff_behaviour,
+from sdl_eval.trace import tools as T
+from sdl_eval.lab.base import STAGES
+from sdl_eval.lab.simulated import make_sim_lab
+from sdl_eval.spec.prompts import build_system_prompt
+from sdl_eval.lab.qc_harness import build_harness
+from sdl_eval.spec.scenarios import load_scenarios, load_spec
+from sdl_eval.score.scorers import (calculation_accuracy, decision_integrity, handoff_behaviour,
                               protocol_correctness, protocol_quality, qc_analysis,
                               taxonomy_coverage)
 
@@ -27,7 +41,7 @@ def build_technician(human: str, judge_model: str | None, run_id: str):
     if human == "cli":
         # One clipboard at a time: run with --max-samples 1, or prompts from different
         # samples interleave and the technician cannot tell which is which.
-        from sdl_eval.human_cli import CliTechnician, InterventionLog
+        from sdl_eval.trace.human_cli import CliTechnician, InterventionLog
         return CliTechnician(judge_model=judge_model, log=InterventionLog(run_id=run_id))
     raise ValueError(f"unknown human mode '{human}'; expected 'auto' or 'cli'")
 
@@ -38,7 +52,7 @@ def build_lab(backend: str, scenario, spec, qc_tools: str = "summary",
         return make_sim_lab(scenario, spec, qc_tools=qc_tools, image_dir=image_dir,
                             technician=technician)
     # HOOK[real-lab]: assemble Lab(robot=OpentronsFlexRobot(host), human=<your channel>,
-    #                   qc=<your QC reader>) — see backends/base.py and backends/opentrons_flex.py.
+    #                   qc=<your QC reader>) — see lab/base.py and lab/opentrons_flex.py.
     raise NotImplementedError(f"backend '{backend}' not wired up yet")
 
 

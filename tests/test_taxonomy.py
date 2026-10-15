@@ -1,6 +1,6 @@
-from sdl_eval.alignment import ANALYSIS_STEPS, RETRIEVE_STEPS, STAGE_STEPS, STEP_STAGE
-from sdl_eval.backends.base import STAGES
-from sdl_eval.taxonomy import agent_step_ids, load_taxonomy, phases
+from sdl_eval.score.alignment import ANALYSIS_STEPS, RETRIEVE_STEPS, STAGE_STEPS, STEP_STAGE
+from sdl_eval.lab.base import STAGES
+from sdl_eval.spec.taxonomy import agent_step_ids, load_taxonomy, phases
 
 
 def test_taxonomy_shape():

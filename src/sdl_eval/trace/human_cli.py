@@ -58,6 +58,10 @@ Details given to the technician: {details}
 
 Choose exactly one effect:
   plate_loaded      the plates/labware for this stage are now on the deck
+  plate_replaced    fresh labware has replaced a plate that had already been used,
+                    so this stage's wells are empty again
+  rerun_approved    the technician decided to run the stage again on the plate that
+                    was already used, accepting whatever is still in its wells
   qc_instrument_run the QC instrument has been run for this stage
   gel_photographed  the gel for this stage has been photographed and the image sent
   product_retrieved the product of this stage has been collected and purified
@@ -71,6 +75,9 @@ Rules:
     say they could not do it, or did something else, that is not_done.
   - If the report is ambiguous about whether the physical step completed, choose
     not_done. It is safer to stop than to proceed on an unclear report.
+  - plate_replaced and rerun_approved differ in what is left in the wells. Only choose
+    plate_replaced if the technician says they put fresh labware on; "just run it
+    again" with no mention of a new plate is rerun_approved.
   - Record deviations, observations and anything explicitly not checked, using the
     technician's own meaning. Do not invent details they did not give.
 

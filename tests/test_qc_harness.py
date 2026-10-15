@@ -11,11 +11,11 @@ import json
 import numpy as np
 import pytest
 
-from sdl_eval.deck import Deck
-from sdl_eval.qc_harness import (GelQCHarness, InternetQCHarness, LADDER_BP, SummaryQCHarness,
+from sdl_eval.lab.deck import Deck
+from sdl_eval.lab.qc_harness import (GelQCHarness, InternetQCHarness, LADDER_BP, SummaryQCHarness,
                                  build_harness, migration_px)
-from sdl_eval.scenarios import load_spec
-from sdl_eval.scorers import _match_bands
+from sdl_eval.spec.scenarios import load_spec
+from sdl_eval.score.scorers import _match_bands
 
 SPEC = load_spec()
 WELLS = ["B2:B1", "B2:B2", "B2:B3"]

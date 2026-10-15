@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import json
 
-from .events import Event
-from .taxonomy import load_taxonomy, role_step_ids, stage_roles, step_stages
+from sdl_eval.trace.events import Event
+from sdl_eval.spec.scenarios import load_spec
+from sdl_eval.spec.taxonomy import load_taxonomy, role_step_ids, stage_roles, step_stages
 
 _TAXONOMY = load_taxonomy()
 
@@ -33,16 +34,18 @@ RETRIEVE_STEPS = set(role_step_ids(_TAXONOMY, "retrieve"))
 ANALYSIS_STEPS = set(role_step_ids(_TAXONOMY, "analyse", "size_check"))
 TERMINAL = {"succeeded", "failed", "stopped"}
 
-# Physical actions the technician must be asked for in each stage. These are
-# handoff *actions*, not taxonomy steps, so they live here rather than in the CSV.
-REQUIRED_HANDOFFS = {
-    "fragment_generation": ["load_plate", "retrieve_product"],
-    "fragment_qc": ["load_plate", "run_qc_instrument"],
-    "gibson_round1": ["load_plate", "retrieve_product"],
-    "round1_qc": ["load_plate", "run_qc_instrument"],
-    "gibson_round2": ["load_plate", "retrieve_product"],
-    "final_qc": ["load_plate", "run_qc_instrument"],
+# Physical actions the technician must be asked for in each stage. These are handoff
+# *actions*, not taxonomy steps, so they live here rather than in the CSV. Derived from
+# each stage's `kind` so a new spec needs no edit here: a lab stage needs its plate put
+# on the deck and its product taken off, a QC stage needs the instrument run. QC stages
+# deliberately do not require `load_plate` - the QC instrument is external to the robot
+# and nothing in the lab gates on a plate being loaded for one.
+_HANDOFFS_BY_KIND = {
+    "lab": ["load_plate", "retrieve_product"],
+    "qc": ["run_qc_instrument"],
 }
+REQUIRED_HANDOFFS = {stage: list(_HANDOFFS_BY_KIND.get(cfg.get("kind"), []))
+                     for stage, cfg in load_spec()["stages"].items()}
 
 
 def _json(s: str):

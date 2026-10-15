@@ -19,10 +19,10 @@ import json
 
 from inspect_ai.model import ModelOutput, ModelUsage
 
-from .backends.base import LAB_STAGES, QC_STAGES, STAGES
-from .deck import Deck
-from .reference_protocol import reference_protocol
-from .scenarios import Scenario, load_spec
+from sdl_eval.lab.base import LAB_STAGES, QC_STAGES, STAGES
+from sdl_eval.lab.deck import Deck
+from reference_protocol import reference_protocol
+from sdl_eval.spec.scenarios import Scenario, load_spec
 
 
 def _call(name: str, **kw) -> ModelOutput:
@@ -91,7 +91,7 @@ def predicted_gel_bands(scn: Scenario) -> dict[str, list[float]]:
     a shadow copy of the lab - the same protocols, the same scenario, the same code - and
     read the truth off it. Nothing about the fault logic is duplicated here.
     """
-    from .backends.simulated import make_sim_lab
+    from sdl_eval.lab.simulated import make_sim_lab
 
     spec = load_spec()
     lab = make_sim_lab(scn, spec, qc_tools="imagej")

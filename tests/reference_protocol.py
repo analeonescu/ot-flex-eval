@@ -71,7 +71,7 @@ def reference_protocol(spec: dict, stage: str) -> str:
             body.append(f'    pip.mix(3, 5.0, {names[slot]}["{well}"])')
             body.append(f'    pip.drop_tip()')
     else:
-        from .deck import Deck
+        from sdl_eval.lab.deck import Deck
         reference = Deck(spec)
         for reaction in cfg.get("reactions", []):
             volumes = reference.reference_volumes_ul(reaction)

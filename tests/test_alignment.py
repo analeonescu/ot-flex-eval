@@ -6,8 +6,8 @@ these pin the rules directly, including the cases that must *not* credit a step.
 """
 import pytest
 
-from sdl_eval.alignment import STAGE_STEPS, evidenced_steps
-from sdl_eval.events import Event
+from sdl_eval.score.alignment import STAGE_STEPS, evidenced_steps
+from sdl_eval.trace.events import Event
 
 VALID_SRC = "requirements = {'apiLevel': '2.19'}\ndef run(protocol): pass\n"
 

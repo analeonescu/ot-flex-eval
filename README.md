@@ -50,15 +50,15 @@ dataset  →  │  solver: setup_lab  →  agent loop (tools)         │  →  
 solver's first step, in [`task.py`](src/sdl_eval/task.py).
 
 **2. The agent gets a prompt and seven tools.** The prompt is rendered from
-`configs/task_spec.yaml` by [`prompts.py`](src/sdl_eval/prompts.py); the tools are in
-[`tools.py`](src/sdl_eval/tools.py).
+`configs/task_spec.yaml` by [`spec/prompts.py`](src/sdl_eval/spec/prompts.py); the tools are in
+[`trace/tools.py`](src/sdl_eval/trace/tools.py).
 
 | Tool | Purpose |
 |---|---|
 | `submit_protocol` | send Opentrons Python code for one stage |
 | `start_run` | run an uploaded protocol |
 | `get_run_status` | poll a run until it finishes or fails |
-| `request_human_action` | ask the technician to load a plate, run the gel machine, photograph the gel, or collect a product |
+| `request_human_action` | ask the technician for a physical step (load a plate, run the gel machine, photograph the gel, collect a product) or for a decision when something has gone wrong (replace a used plate, continue as is, approve, review) |
 | `get_qc_data` | fetch the QC result for a stage |
 | `record_decision` | log accept / reject / inconclusive, with evidence |
 | `submit_final_report` | state the outcome: pass / fail / inconclusive |
@@ -74,10 +74,10 @@ intermediate, check that, do a final join, check the result, then report.
 
 **4. Each protocol is really executed.** `submit_protocol` sends the code through
 `opentrons.simulate`, the actual Opentrons software, in a subprocess
-([`protocol_run.py`](src/sdl_eval/protocol_run.py)). Deck collisions, impossible volumes
+([`protocol_run.py`](src/sdl_eval/lab/protocol_run.py)). Deck collisions, impossible volumes
 and a missing trash bin are rejected here.
 
-**5. Liquid actually moves.** [`deck.py`](src/sdl_eval/deck.py) reads the pipetting steps
+**5. Liquid actually moves.** [`deck.py`](src/sdl_eval/lab/deck.py) reads the pipetting steps
 out of that simulation and applies them to a model of what is in each well. It then works
 out whether the reaction succeeded: were the inputs present in the right molar amounts,
 with the reagents, and was it incubated correctly?
@@ -94,7 +94,15 @@ with the reagents, and was it incubated correctly?
 None of those cases is scripted. They follow from the chemistry model.
 
 **7. The scenario's fault is applied on top** of that real result, by
-[`backends/simulated.py`](src/sdl_eval/backends/simulated.py).
+[`lab/simulated.py`](src/sdl_eval/lab/simulated.py).
+
+**7a. A plate can only be run once.** Running a stage a second time would pipette on top
+of what the first run left in the wells, which quietly doubles every amount. The robot
+will not do that on its own: it fails the run and tells the agent to put the question to
+a person. The technician either replaces the plate (`replace_plate`, which empties the
+stage's wells) or lets the agent carry on with the used one (`continue_as_is`, which
+keeps the carry-over and records it). Either choice is logged, so a messy gel caused by
+an approved re-run can be told apart from one caused by the agent's chemistry.
 
 **8. The lab records the truth** as it goes: what reached each well, whether each reaction
 worked, and what an honest reading of each gel would say. The agent never sees this.
@@ -124,38 +132,49 @@ failure the agent caused is treated exactly like an injected one.
 | [`configs/scenarios.yaml`](configs/scenarios.yaml) | the six faults |
 | [`data/ground_truth.csv`](data/ground_truth.csv) | the 63 real experiment steps, who owns each, how each fails |
 
-### What the agent interacts with
+### The four parts
+
+The package is laid out as the four parts of one run, so a file's path tells you which
+part it belongs to.
+
+**`spec/` — what the experiment is, and what a correct run looks like**
 
 | File | Job |
 |---|---|
-| `prompts.py` | renders the system prompt from the spec. No experiment-specific wording lives here. |
-| `tools.py` | the seven tools above. Thin wrappers that log every call. |
-| `backends/base.py` | the three interfaces a lab must implement: `Robot`, `HumanChannel`, `QCSource` |
-| `backends/simulated.py` | the simulated lab. Ties the three together and injects faults. |
-| `backends/opentrons_flex.py` | the real-hardware backend. A stub. |
-| `human_cli.py` | a real technician at the terminal, with an LLM judge reading their report |
+| `spec/scenarios.py` | loads `task_spec.yaml` (the experiment) and `scenarios.yaml` (the faults) |
+| `spec/taxonomy.py` | loads the 63-step CSV. The agent never sees this; scorers use it at the end |
+| `spec/prompts.py` | renders the system prompt from the spec. This is what the agent *does* see |
 
-### The simulation underneath
+**`lab/` — the simulated lab, between the agent and Opentrons**
 
 | File | Job |
 |---|---|
-| `protocol_run.py` | runs the agent's protocol through `opentrons.simulate` and extracts what it did |
-| `_simulate_worker.py` | the subprocess that runs it, so agent code cannot hang the eval |
-| `deck.py` | what is in each well, the chemistry, and reading a gel |
-| `qc_harness.py` | how much QC analysis the agent has to do itself |
-| `calculations.py` | the dsDNA mass and molar conversions |
-| `scenarios.py` | loads `task_spec.yaml` and `scenarios.yaml` |
+| `lab/base.py` | the three interfaces a lab must implement: `Robot`, `HumanChannel`, `QCSource` |
+| `lab/simulated.py` | the simulated lab. Ties the three together and injects faults |
+| `lab/opentrons_flex.py` | the real-hardware backend. A stub |
+| `lab/protocol_run.py` | runs the agent's protocol through `opentrons.simulate` and extracts what it did |
+| `lab/_simulate_worker.py` | the subprocess that runs it, so agent code cannot hang the eval |
+| `lab/deck.py` | what is in each well, the chemistry, and reading a gel |
+| `lab/qc_harness.py` | how much QC analysis the agent has to do itself |
+| `lab/calculations.py` | the dsDNA mass and molar conversions |
 
-### Scoring
+**`trace/` — every action, with its metadata, in one log**
 
 | File | Job |
 |---|---|
-| `events.py` | the append-only log everything is scored from |
-| `taxonomy.py` | loads the 63-step CSV |
-| `alignment.py` | decides which tool calls count as evidence for which step |
-| `scorers.py` | the scorers |
-| `oracle.py` | scripted agents with known behaviour, used to test the scorers |
-| `reference_protocol.py` | generates known-correct robot code from the spec |
+| `trace/tools.py` | the seven tools above. Thin wrappers that log every call |
+| `trace/events.py` | the append-only log. The only thing scoring reads |
+| `trace/human_cli.py` | a real technician at the terminal, with an LLM judge reading their report |
+
+**`score/` — deterministic scorers, no model in the loop**
+
+| File | Job |
+|---|---|
+| `score/alignment.py` | decides which tool calls count as evidence for which step |
+| `score/scorers.py` | the scorers |
+
+Test fixtures live in `tests/`, not in the shipped package: `tests/oracle.py` (scripted
+agents with known behaviour) and `tests/reference_protocol.py` (known-correct robot code).
 
 ## Running it
 
@@ -165,6 +184,23 @@ python -m pip install -e ".[dev]"
 
 `opentrons` is a required dependency, not an optional one, because protocols are really
 simulated.
+
+### If imports fail
+
+`ModuleNotFoundError: No module named 'sdl_eval'` with the package apparently installed is
+usually macOS, not pip. An editable install writes a `.pth` file into `site-packages`
+pointing at `src/`, and if that file picks up the macOS `hidden` flag, Python 3.11 and
+later silently skip it: the install looks correct and imports still fail. To check:
+
+```bash
+ls -lO .venv/lib/python3.12/site-packages/*.pth   # "hidden" in the flags column
+chflags nohidden .venv/lib/python3.12/site-packages/*.pth
+```
+
+If something keeps re-applying the flag (a syncing folder such as Desktop under iCloud
+Drive is one cause), put the virtualenv outside that folder, or just prefix commands with
+`PYTHONPATH=src`. `pytest` is unaffected either way: it reads `pythonpath = ["src"]` from
+`pyproject.toml`.
 
 Tests need no API key; they use scripted agents rather than a model.
 
@@ -202,6 +238,21 @@ inspect eval src/sdl_eval/task.py -T scenarios=round1_ambiguous,final_wrong_size
 ## Options
 
 Each `-T` flag is an argument of `gibson_analysis` in [`task.py`](src/sdl_eval/task.py).
+To list them all, with their defaults and allowed values:
+
+```bash
+PYTHONPATH=src python -m sdl_eval --help   # the -T options, plus the usual Inspect flags
+PYTHONPATH=src python -m sdl_eval --all    # the above, plus every `inspect eval` flag
+```
+
+Both are generated: the `-T` options from the task's own signature and docstring, the
+Inspect flags from Inspect's command definition. Neither can fall out of step with the
+code. (`PYTHONPATH=src` also works as plain `python -m sdl_eval` when the editable
+install is importable; see [troubleshooting](#if-imports-fail) if it isn't.)
+
+That output is generated from the task's own signature and docstring, so it cannot fall
+out of step with the code. (`inspect eval --help` covers Inspect's flags, not a task's
+parameters.)
 
 ### `-T qc_tools=` — how much QC analysis the agent does
 
