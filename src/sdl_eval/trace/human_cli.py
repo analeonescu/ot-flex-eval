@@ -19,10 +19,10 @@ world, it does not define it.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,8 +47,14 @@ CLIPBOARD = """\
     - anything you noticed (bubbles, low volume, condensation)
     - anything you did NOT check
 
-  Type your report, then a single '.' on its own line to submit.
+  Type your report. To submit it, put '.' on a line of
+  its own and press Enter. END, SUBMIT and Ctrl-D also
+  submit. An empty report counts as NOT DONE.
 """
+
+#: Typed on a line of its own, any of these ends the report. '.' is the documented one;
+#: the others are here because they are what people reach for.
+SUBMIT_TOKENS = {".", "end", "END", "submit", "SUBMIT", "/done", "done."}
 
 JUDGE_SYSTEM = """\
 You read a lab technician's free-text report and decide what it means for the lab.
@@ -154,19 +160,46 @@ class InterventionLog:
         return record
 
 
-def read_report_from_terminal(action: str, stage: str, details: str) -> str:
-    """Show the clipboard and collect a multi-line report, pausing Inspect's live display."""
-    from inspect_ai.util import input_screen
+@contextmanager
+def _technician_console():
+    """Inspect's input screen when an eval is running, a plain console otherwise.
 
-    with input_screen(header="Technician request") as console:
-        console.print(CLIPBOARD.format(stage=stage, action=action, details=details or "-"))
+    `input_screen` suspends the live task display so a blocking read can own the
+    terminal. Outside a running eval there is no display to suspend and it raises, so
+    fall back to the bare Rich console - which is what makes this runnable by hand.
+    """
+    from inspect_ai._display.core.active import _active_task_screen
+
+    if _active_task_screen.get(None) is not None:
+        from inspect_ai.util import input_screen
+
+        with input_screen(header="Technician request") as console:
+            yield console
+    else:
+        import rich
+
+        yield rich.get_console()
+
+
+def read_report_from_terminal(action: str, stage: str, details: str) -> str:
+    """Show the clipboard and collect a multi-line report, pausing Inspect's live display.
+
+    Must run on the thread driving the eval; see the note in `CliTechnician.handle`.
+    """
+    with _technician_console() as console:
+        # markup=False: the report form is literal text, and a stray '[' in `details`
+        # would otherwise be parsed as a Rich tag and swallow the rest of the line.
+        console.print(CLIPBOARD.format(stage=stage, action=action, details=details or "-"),
+                      markup=False, highlight=False)
         lines: list[str] = []
         while True:
             try:
                 line = console.input("  > ")
             except (EOFError, KeyboardInterrupt):
+                # Ctrl-D / Ctrl-C submits what has been typed so far rather than
+                # discarding it; an empty report is judged `not_done` anyway.
                 break
-            if line.strip() == ".":
+            if line.strip() in SUBMIT_TOKENS:
                 break
             lines.append(line)
     return "\n".join(lines).strip()
@@ -211,8 +244,17 @@ class CliTechnician:
 
     async def handle(self, action: str, stage: str, details: str, lab):
         started = time.monotonic()
-        # The terminal read blocks, so it runs off the event loop.
-        report = await asyncio.to_thread(self.reader, action, stage, details)
+        # Read inline, on this thread, even though it blocks the event loop.
+        #
+        # It must not go through asyncio.to_thread: `input_screen()` suspends the task
+        # display, and with Inspect's default (textual) display that suspend only takes
+        # effect on the thread running the app. Called from a worker thread the display
+        # is never suspended, Textual keeps the keyboard, and nothing the technician
+        # types - including the '.' that submits - reaches `console.input()`.
+        #
+        # Blocking here is the intended behaviour: the lab is waiting for a person.
+        # Run with --max-samples 1 so no other sample needs the loop meanwhile.
+        report = self.reader(action, stage, details)
         seconds = round(time.monotonic() - started, 1)
 
         judged = await self.interpret(action, stage, details, report, lab.EFFECTS)

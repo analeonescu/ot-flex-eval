@@ -155,3 +155,79 @@ def test_the_log_appends_rather_than_overwrites(tmp_path):
     run(tech.handle("review", "final_qc", "", lab.robot))
     run(tech.handle("approve", "final_qc", "", lab.robot))
     assert len((tmp_path / "human.jsonl").read_text().strip().splitlines()) == 2
+
+
+# ------------------------------------------------- the terminal read must not be threaded
+
+def test_the_report_is_read_on_the_calling_thread():
+    """`input_screen()` suspends the task display, and that only works on the thread
+    running it. Read from a worker thread (asyncio.to_thread) the display is never
+    suspended, Textual keeps the keyboard, and nothing the technician types arrives.
+    """
+    import threading
+
+    seen: dict[str, threading.Thread] = {}
+
+    def reader(action, stage, details):
+        seen["thread"] = threading.current_thread()
+        return "loaded the plate"
+
+    lab = make_sim_lab(SCN, SPEC)
+    tech = CliTechnician(judge_model=judge_returning({"effect": "plate_loaded",
+                                                      "summary": "loaded"}),
+                         log=InterventionLog(path="/dev/null"), reader=reader)
+    run(tech.handle("load_plate", "gibson_round1", "", lab.robot))
+
+    assert seen["thread"] is threading.main_thread()
+
+
+def test_a_report_can_be_submitted_without_a_running_eval():
+    """The reader falls back to a plain console, so it works outside an eval too.
+
+    Without the fallback `input_screen()` raises "console input function called outside
+    of running evaluation" and the report can never be submitted.
+    """
+    import io
+    import sys
+
+    from sdl_eval.trace.human_cli import read_report_from_terminal
+
+    stdin = sys.stdin
+    sys.stdin = io.StringIO("loaded it\nnoticed a bubble\n.\n")
+    try:
+        report = read_report_from_terminal("load_plate", "gibson_round1", "details")
+    finally:
+        sys.stdin = stdin
+    assert report == "loaded it\nnoticed a bubble"
+
+
+@pytest.mark.parametrize("token", [".", "END", "end", "submit", "/done"])
+def test_each_submit_token_ends_the_report(token):
+    import io
+    import sys
+
+    from sdl_eval.trace.human_cli import read_report_from_terminal
+
+    stdin = sys.stdin
+    sys.stdin = io.StringIO(f"did the thing\n{token}\nthis must not be read\n")
+    try:
+        report = read_report_from_terminal("load_plate", "gibson_round1", "")
+    finally:
+        sys.stdin = stdin
+    assert report == "did the thing"
+
+
+def test_square_brackets_in_the_details_do_not_break_the_form():
+    """Rich would read '[B1]' as a markup tag and swallow the rest of the line."""
+    import io
+    import sys
+
+    from sdl_eval.trace.human_cli import read_report_from_terminal
+
+    stdin = sys.stdin
+    sys.stdin = io.StringIO("ok\n.\n")
+    try:
+        report = read_report_from_terminal("load_plate", "s", "put plate in [B1] now")
+    finally:
+        sys.stdin = stdin
+    assert report == "ok"
