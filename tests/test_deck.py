@@ -6,7 +6,7 @@ simulated protocols.
 """
 import pytest
 
-from sdl_eval.lab.deck import DETECTION_NG, Deck
+from sdl_eval.lab.deck import LIMIT_NG, Deck
 from sdl_eval.lab.protocol_run import Transfer
 
 SPEC = {
@@ -150,7 +150,7 @@ def test_wrong_stoichiometry_gives_a_partial_reaction():
     assert result.outcome == "partial"
     assert any("outside tolerance" in r for r in result.reasons)
     well = deck.well("B1:A1")
-    assert well.ng("product") > 0 and well.ng("frag_Y") > DETECTION_NG
+    assert well.ng("product") > 0 and well.ng("frag_Y") > LIMIT_NG
 
 
 def test_amounts_inside_tolerance_still_count_as_correct():
@@ -177,7 +177,7 @@ def test_a_failed_reaction_still_hands_on_whatever_dna_is_there():
     deck.purify_into_source("assemble")
     harvested = deck.contents("B2:C1")
     assert "product" not in harvested
-    assert harvested.get("frag_Y", 0) > DETECTION_NG
+    assert harvested.get("frag_Y", 0) > LIMIT_NG
 
 
 def test_harvesting_an_empty_well_leaves_the_destination_empty():
@@ -199,7 +199,7 @@ def test_bands_are_sorted_by_mass_and_scaled_to_relative_intensity():
 
 def test_species_below_the_detection_limit_do_not_show():
     deck = Deck(SPEC)
-    deck.well("B2:C1").species = {"product": 90.0, "junk": DETECTION_NG / 2}
+    deck.well("B2:C1").species = {"product": 90.0, "junk": LIMIT_NG / 2}
     assert [b["bp"] for b in deck.bands(["B2:C1"])] == [3000]
 
 

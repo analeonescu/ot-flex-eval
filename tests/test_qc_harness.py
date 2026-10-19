@@ -16,6 +16,7 @@ from sdl_eval.lab.qc_harness import (GelQCHarness, InternetQCHarness, LADDER_BP,
                                  build_harness, migration_px)
 from sdl_eval.spec.scenarios import load_spec
 from sdl_eval.score.scorers import _match_bands
+import base64
 
 SPEC = load_spec()
 WELLS = ["B2:B1", "B2:B2", "B2:B3"]
@@ -161,7 +162,6 @@ def test_imagej_is_still_accepted_as_an_old_name():
 def test_a_vision_mode_produces_a_png_data_uri():
     uri = build_harness("image_vlm").image_data_uri("fragment_qc", WELLS, deck_with_fragments())
     assert uri.startswith("data:image/png;base64,")
-    import base64
     assert base64.b64decode(uri.split(",", 1)[1]).startswith(b"\x89PNG")
 
 

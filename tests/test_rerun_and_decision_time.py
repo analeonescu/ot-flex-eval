@@ -12,11 +12,12 @@ Two things are pinned here:
 import pytest
 
 from sdl_eval.score.alignment import REQUIRED_HANDOFFS
-from sdl_eval.lab.base import HUMAN_ONLY_ACTIONS, INTERVENTION_ACTIONS
+from sdl_eval.lab.base import HUMAN_ACTIONS, HUMAN_ONLY_ACTIONS, INTERVENTION_ACTIONS
 from sdl_eval.lab.simulated import AutoTechnician, make_sim_lab
 from sdl_eval.trace.events import Event
 from sdl_eval.spec.scenarios import load_scenarios, load_spec
 from sdl_eval.score.scorers import observed_truth
+from sdl_eval.lab.protocol_run import ProtocolRun, Transfer
 
 SPEC = load_spec()
 CLEAN = load_scenarios()["clean_success"]
@@ -102,11 +103,27 @@ def test_physical_steps_and_interventions_are_distinct():
     assert "continue_as_is" in INTERVENTION_ACTIONS
 
 
-def test_the_auto_technician_can_perform_every_action():
-    """A gap here would make an action silently become a no-op 'acknowledged'."""
-    from sdl_eval.lab.base import HUMAN_ACTIONS
-    physical = set(HUMAN_ONLY_ACTIONS) | {"replace_plate", "continue_as_is"}
-    assert physical <= set(AutoTechnician.ACTION_EFFECT)
+def test_every_named_action_changes_the_lab():
+    """A gap here would make a concrete action silently become a no-op 'acknowledged'.
+
+    The `other_*` actions are deliberate catch-alls and are excluded: a scripted
+    technician cannot guess what an open-ended request means. Under `-T human=cli` it is
+    the judge, reading the person's report, that gives those an effect.
+    """
+    named = {a for a in HUMAN_ONLY_ACTIONS if not a.startswith("other_")}
+    named |= {"replace_plate", "continue_as_is"}
+    assert named <= set(AutoTechnician.ACTION_EFFECT)
+
+
+def test_open_ended_actions_resolve_to_acknowledged_on_purpose():
+    """Not an oversight: the scripted technician records them without changing anything."""
+    catch_alls = [a for a in HUMAN_ACTIONS if a.startswith("other_")]
+    assert catch_alls, "the other_* catch-alls have gone; this test is now pointless"
+    for action in catch_alls:
+        assert AutoTechnician.ACTION_EFFECT.get(action, "acknowledged") == "acknowledged"
+
+
+def test_every_action_maps_to_an_effect_the_lab_knows():
     for action in HUMAN_ACTIONS:
         effect = AutoTechnician.ACTION_EFFECT.get(action, "acknowledged")
         assert effect in make_sim_lab(CLEAN, SPEC).robot.EFFECTS
@@ -117,7 +134,6 @@ def test_the_auto_technician_can_perform_every_action():
 @pytest.fixture
 def lab():
     """A simulated lab with one stage's protocol already uploaded, no opentrons needed."""
-    from sdl_eval.lab.protocol_run import ProtocolRun, Transfer
 
     lab = make_sim_lab(CLEAN, SPEC)
     sim = lab.robot

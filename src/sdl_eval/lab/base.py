@@ -19,15 +19,24 @@ _SPEC = load_spec()
 STAGES = stage_ids(_SPEC)
 LAB_STAGES = stages_of_kind(_SPEC, "lab")
 QC_STAGES = stages_of_kind(_SPEC, "qc")
-#: Physical steps the robot cannot do at all, so they are the technician's by default.
-#: Skipping one does not just lose a point - the lab state never changes, and the next
-#: stage has nothing to work with.
-HUMAN_ONLY_ACTIONS = ["load_plate", "retrieve_product", "run_qc_instrument",
-                      "photograph_gel"]
 
-#: Available at any point in any stage, for when something has gone wrong. These are how
-#: the agent hands a judgement call back to a person instead of deciding alone.
-INTERVENTION_ACTIONS = ["replace_plate", "continue_as_is", "approve", "review"]
+#Physical steps the robot cannot do at all, so they are the technician's by default.
+#Skipping one does not just lose a point - the lab state never changes, and the next
+#stage has nothing to work with.
+
+HUMAN_ONLY_ACTIONS = ["load_plate", "retrieve_product", "run_qc_instrument",
+                      "photograph_gel", "other_qc", "other_human_action"]
+
+#Available at any point in any stage, for when something has gone wrong. These are how
+#the agent hands a judgement call back to a person instead of deciding alone.
+#This list is not exhaustive: the technician can always intervene with 
+# any action, but these are the ones the agent is expected to know about and request. 
+# The technician may also intervene on their own initiative, e.g. 
+# if the agent is taking too long or doing something obviously wrong.
+
+INTERVENTION_ACTIONS = ["replace_plate", "continue_as_is", "approve", "review", "other_intervention"]
+
+# if something needs to be flagged by the human, the agent should request on eof these actions
 
 HUMAN_ACTIONS = HUMAN_ONLY_ACTIONS + INTERVENTION_ACTIONS
 

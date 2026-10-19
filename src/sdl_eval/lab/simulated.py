@@ -1,8 +1,7 @@
-"""Simulated lab: sits between the agent and Opentrons.
+"""Simulated lab: sits between the agent and physical OT.
 
-The agent's protocol is really simulated (protocol_run), its transfers are really
-applied to well contents (deck), and QC data is computed from those contents. So
-what the agent writes decides what the agent sees:
+The agent's protocol is simulated (protocol_run), its transfers are
+applied to well contents (deck), and QC data is computed from those contents:
 
     submit_protocol -> opentrons.simulate      (invalid protocols are rejected here)
     start_run       -> transfers applied, reactions attempted, faults injected
@@ -14,9 +13,7 @@ back, so correctness is judged against what really happened in this run rather t
 against a label in a config file.
 """
 from __future__ import annotations
-
 from pathlib import Path
-
 from sdl_eval.lab.deck import Deck
 from sdl_eval.trace.events import EventLog
 from sdl_eval.lab.protocol_run import ProtocolRun, simulate_protocol
@@ -36,26 +33,30 @@ class SimulatedLab:
         self.scn, self.spec, self.log = scenario, spec, log
         self.technician = technician or AutoTechnician()
         self.deck = Deck(spec)
+
         # How much of the QC analysis the agent has to do itself (see qc_harness.py).
+
         self.harness = build_harness(qc_tools, image_dir)
+
         # Recorded so scorers know what the agent was allowed to use.
         log.add("sim", "qc_mode", mode=self.harness.mode,
                 measures=getattr(self.harness, "measures", False),
                 shows_image=getattr(self.harness, "shows_image", False))
         self.protocols: dict[str, dict] = {}     # protocol_id -> {stage, source, run}
         self.runs: dict[str, dict] = {}
-        self.loaded: set[str] = set()            # stages whose plates the technician loaded
-        self.qc_run: set[str] = set()            # stages whose QC instrument has been run
-        self.photographed: set[str] = set()      # stages whose gel the technician has imaged
+        self.loaded: set[str] = set()            # stages which plates the technician loaded
+        self.qc_run: set[str] = set()            # stages which QC instrument has been run
+        self.photographed: set[str] = set()      # stages which gel the technician has imaged
         self.image_requested: set[str] = set()   # stages where the agent asked for an image
-        self.harvested: set[str] = set()         # stages whose product has been retrieved
+        self.harvested: set[str] = set()         # stages which product has been retrieved
         self.succeeded: set[str] = set()
+
         # stage -> the run that already pipetted onto its plate. A second run for the
         # same stage would land on top of that, so it is blocked until a person decides
         # between fresh labware and carrying on regardless.
+
         self.plate_used: dict[str, str] = {}
 
-    # ------------------------------------------------------------------ Robot
     def validate_protocol(self, source: str, stage: str) -> ValidationResult:
         """Really simulate the protocol. Errors here are the simulator's own."""
         run = simulate_protocol(source)
@@ -88,9 +89,11 @@ class SimulatedLab:
             return rid
 
         if (prior := self.plate_used.get(stage)):
+
             # Re-running onto a plate that has already been pipetted into would silently
             # double the contents of every well. The robot cannot tell whether that is
             # wanted, so it stops and the agent has to put the question to a person.
+
             self.log.add("sim", "stale_plate_blocked", stage=stage, prior_run=prior)
             self.runs[rid] = {"stage": stage, "polls": 0, "status": "failed",
                               "blocked": True, "log": [
@@ -101,13 +104,14 @@ class SimulatedLab:
             return rid
 
         log_lines = [f"run started for {stage}"]
-        log_lines += self.deck.apply_transfers(run.transfers)          # physical warnings
+        log_lines += self.deck.apply_transfers(run.transfers)  # physical warnings
         self.plate_used[stage] = rid
         self._log_delivery(stage, run)
 
         fault = next(iter(self.scn.for_stage(stage, "run_error")), None)
         if fault:
             # The run dies partway: liquid already moved, but nothing reacts.
+
             self.log.add("sim", "fault_injected", stage=stage, fault="run_error")
             self.runs[rid] = {"stage": stage, "polls": 0, "status": "failed",
                               "log": log_lines + [f"ERROR: {fault.get('message', 'run error')}"]}
@@ -140,7 +144,8 @@ class SimulatedLab:
                          conditions_met=conditions)
 
     def _finish(self, stage: str, entry: dict) -> None:
-        """Apply the chemistry once a run reaches its terminal state."""
+        """Apply the chemistry calculations once a run reaches its terminal state."""
+
         reactions = self.deck.run_stage(stage, self.protocols_for(stage))
         for reaction in reactions:
             self.log.add("sim", "reaction", stage=stage, well=reaction.well,
@@ -153,6 +158,7 @@ class SimulatedLab:
 
     def protocols_for(self, stage: str) -> ProtocolRun:
         """The most recent simulated run for a stage (its thermal steps drive the chemistry)."""
+        
         for entry in reversed(list(self.protocols.values())):
             if entry["stage"] == stage:
                 return entry["run"]
@@ -160,6 +166,7 @@ class SimulatedLab:
 
     def _inject_contents_faults(self, stage: str) -> None:
         """Apply scenario faults by modifying the real well contents."""
+        
         for fault in self.scn.for_stage(stage, "wrong_product"):
             species, becomes = fault["species"], fault["becomes"]
             for reaction in self.spec["stages"][stage].get("reactions", []):
@@ -187,7 +194,6 @@ class SimulatedLab:
         return RunState(run_id, entry["status"], list(entry["log"]),
                         blocked=entry.get("blocked", False))
 
-    # ------------------------------------------------------------------ Human
     async def request(self, action: str, stage: str, details: str) -> HumanResponse:
         """Hand the request to whoever is playing the technician, then apply the result.
 
@@ -197,14 +203,19 @@ class SimulatedLab:
         works out which effect that was (see human_cli.py).
         """
         if action == "photograph_gel":
+
             # Remember that the agent asked, so "asked and was refused" can be told apart
             # from "never asked" when scoring the analysis.
+
             self.image_requested.add(stage)
+
         # HOOK[human-model]: swap in a different technician (slow, error-prone, refusing).
+
         return await self.technician.handle(action, stage, details, self)
 
     #: What a technician can actually change about the lab. The judge in human_cli.py
     #: picks from exactly these, which is what makes free text safe to act on.
+
     EFFECTS = ("plate_loaded", "plate_replaced", "rerun_approved", "qc_instrument_run",
                "gel_photographed", "product_retrieved", "acknowledged", "not_done")
 
@@ -214,7 +225,9 @@ class SimulatedLab:
             self.loaded.add(stage)
             return HumanResponse(True, f"plates for {stage} are loaded on the deck")
         if effect == "plate_replaced":
+
             # Fresh labware: the stage starts from the state it had before its first run.
+
             cleared = self.deck.reset_stage(stage)
             self.loaded.add(stage)
             self.plate_used.pop(stage, None)
@@ -223,10 +236,13 @@ class SimulatedLab:
             self.log.add("sim", "plate_replaced", stage=stage, wells_cleared=cleared)
             where = f"; wells {', '.join(cleared)} are empty" if cleared else ""
             return HumanResponse(True, f"a fresh plate for {stage} is on the deck{where}")
+        
         if effect == "rerun_approved":
+
             # The technician chose to run again on the used plate. Nothing is cleared, so
             # the next run really does add to what is already there - recorded, because
             # it changes how the stage's QC should be read.
+
             wells = [r["well"] for r in self.spec["stages"][stage].get("reactions", [])]
             carried = {w: self.deck.contents(w) for w in wells}
             self.plate_used.pop(stage, None)
@@ -246,8 +262,10 @@ class SimulatedLab:
                 return HumanResponse(False, f"nothing to retrieve: no completed run for {stage}")
             well = self.deck.purify_into_source(stage)
             self.harvested.add(stage)
+
             # The sample for the next QC stage is now determined, so record what an honest
             # reading of it would say - whether or not the agent ever asks to see it.
+
             if (qc_stage := self._next_qc_stage(stage)):
                 self._record_qc_truth(qc_stage)
             return HumanResponse(True, f"product of {stage} purified into {well}")
@@ -255,7 +273,6 @@ class SimulatedLab:
             return HumanResponse(False, f"the technician did not complete '{stage}'")
         return HumanResponse(True, f"technician acknowledged the request for {stage}")
 
-    # --------------------------------------------------------------------- QC
     def _next_qc_stage(self, lab_stage: str) -> str | None:
         """The QC stage that checks `lab_stage`'s product."""
         stages = list(self.spec["stages"])
@@ -293,9 +310,11 @@ class SimulatedLab:
             return QCResult(False, message="QC instrument data interface timeout (no file produced)")
 
         wells = cfg.get("sample_from", [])
+
         # In the gel modes there is nothing to read until someone has photographed the
         # gel, so the agent has to ask for the picture. Whether one arrived is recorded
         # either way: not having an image is itself a finding.
+
         if getattr(self.harness, "requires_analysis", False) and stage not in self.photographed:
             self._record_gel_image(stage, provided=False)
             return QCResult(False, message=(
@@ -305,8 +324,10 @@ class SimulatedLab:
 
         if getattr(self.harness, "requires_analysis", False):
             self._record_gel_image(stage, provided=True)
+
         # In the gel modes the payload is a lane map, and an image when the mode shows
         # one, but never the band sizes: the agent has to work those out.
+
         return QCResult(True, self.harness.payload(stage, wells, self.deck))
 
     def _record_gel_image(self, stage: str, provided: bool) -> None:
@@ -349,6 +370,7 @@ class AutoTechnician:
     name = "auto"
 
     #: Which effect each requested action produces when nobody is really doing the work.
+    
     ACTION_EFFECT = {"load_plate": "plate_loaded", "run_qc_instrument": "qc_instrument_run",
                      "photograph_gel": "gel_photographed",
                      "retrieve_product": "product_retrieved",

@@ -3,12 +3,12 @@
 The `qc_tools` task parameter selects a mode:
 
   summary       get_qc_data hands back a tidy list of band sizes. The agent reads
-                numbers; there is no analysis to do. (A baseline, not a real task.)
+                numbers; there is no analysis to do. (This is a baseline, not a real task.)
   image_manual  The agent gets a lane map but no picture. It reads the gel numerically
                 with `measure_gel_lane`, which returns the brightness down one lane, then
                 finds the peaks and calibrates them against the ladder itself.
   image_vlm     The agent is shown the gel as an actual image and has to read it by eye.
-                No measurement tool. Needs a vision-capable model.
+                No measurement tool. Needs a vision-capable model -> will be added separately.
   image_both    Both: the picture and the measurement tool.
   internet      Not implemented - see InternetQCHarness.
 
@@ -22,13 +22,12 @@ that pipettes the wrong thing produces a gel that really shows it. DNA migrates 
 log of its length, which is what makes a ladder necessary to read one.
 """
 from __future__ import annotations
-
+import base64
 import math
 import struct
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-
 import numpy as np
 
 #: Reference ladder, in bp. Printed in lane 0 of every gel and given to the agent.
@@ -54,7 +53,7 @@ def migration_px(bp: float) -> float:
 @dataclass
 class Lane:
     index: int
-    label: str                       # "ladder" or the source well, e.g. "B2:B1"
+    label: str # "ladder" or the source well, e.g. "B2:B1"
     bands: list[dict] = field(default_factory=list)   # [{bp, rel_intensity}]
 
 
@@ -65,6 +64,7 @@ class GelImage:
         self.lanes = lanes
         width = MARGIN * 2 + len(lanes) * LANE_WIDTH + (len(lanes) - 1) * LANE_GAP
         rng = np.random.default_rng(seed)
+
         # Faint background gradient plus noise, so profiles look like a real scan.
         gel = np.full((GEL_HEIGHT, width), float(BACKGROUND))
         gel += np.linspace(6.0, 0.0, GEL_HEIGHT)[:, None]
@@ -75,6 +75,7 @@ class GelImage:
             x0 = self.lane_x0(lane.index)
             for band in lane.bands:
                 centre = migration_px(band["bp"])
+
                 # Brighter bands are also a little broader, as on a real gel.
                 amplitude = 45.0 + 190.0 * min(1.0, float(band["rel_intensity"]))
                 sigma = BAND_SIGMA_PX * (1.0 + 0.25 * float(band["rel_intensity"]))
@@ -110,8 +111,6 @@ class GelImage:
                 + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
-# --------------------------------------------------------------------------- harnesses
-
 class SummaryQCHarness:
     """Hands the agent the answer: band sizes, already measured."""
 
@@ -127,10 +126,12 @@ class SummaryQCHarness:
 
 
 class GelQCHarness:
-    """Hands the agent a gel to read, but never the band sizes.
+    """Hands the agent a gel image to read, but never the band sizes.
 
     `measures` gives it the densitometry tool; `shows_image` puts the picture itself in
     front of the model. At least one of the two is always on.
+
+    At the moment, this gel image is provided in another directory of known path.
     """
 
     requires_analysis = True
@@ -186,7 +187,6 @@ class GelQCHarness:
 
     def image_data_uri(self, stage: str, wells: list[str], deck) -> str:
         """The gel as a PNG data URI, for attaching to a tool result."""
-        import base64
         png = self.gel(stage, wells, deck).to_png()
         return "data:image/png;base64," + base64.b64encode(png).decode()
 
@@ -210,9 +210,9 @@ class GelQCHarness:
 class InternetQCHarness:
     """Placeholder for the 'let the agent find its own tools' mode.
 
-    Not implemented: it would run agent-written code with network access, and this
-    machine has no container runtime to isolate that. Decide on sandboxing (Docker,
-    or a remote sandbox) before enabling it; the flag and wiring already exist.
+    Not implemented: it would run agent-written code with network access.
+    Decide on sandboxing (Docker, or a remote sandbox) before enabling it; 
+    the flag and wiring already exist.
     """
 
     mode = "internet"
@@ -227,7 +227,6 @@ class InternetQCHarness:
         )
 
 
-#: mode -> (measures, shows_image). "imagej" is the old name for image_manual.
 GEL_MODES = {
     "image_manual": (True, False),
     "image_vlm": (False, True),

@@ -1,4 +1,4 @@
-"""Run an agent-written Opentrons protocol and turn the result into structured facts.
+"""Run an agent-written OT protocol and turn the result into structured facts.
 
 This is the bridge the rest of the eval scores against: instead of asking "does this
 code parse?", it asks "what would this code actually do on the deck?". The answer
@@ -12,15 +12,15 @@ The simulation runs in a subprocess (`_simulate_worker.py`) with a timeout, beca
 the protocol is agent-written code.
 """
 from __future__ import annotations
-
 import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
 WORKER = Path(__file__).with_name("_simulate_worker.py")
-DEFAULT_TIMEOUT_S = 120
+DEFAULT_TIMEOUT_S = 300
 
 
 @dataclass(frozen=True)
@@ -51,8 +51,9 @@ class ProtocolRun:
 
     def runs_cycles(self, repetitions: int, denature_c: float = 90.0) -> bool:
         """True if a thermocycler profile runs at least `repetitions` cycles including a
-        denaturation step at or above `denature_c` (i.e. a real PCR, not a warm hold)."""
-        import re
+        denaturation step at or above `denature_c` (i.e. a real PCR, not a warm hold).
+        """
+        
         for text in self.thermal:
             reps = re.search(r"starting (\d+) repetitions", text)
             if not reps or int(reps.group(1)) < repetitions:
@@ -67,7 +68,6 @@ class ProtocolRun:
         Parsed from the simulator's own log text, e.g. "Setting Thermocycler well block
         temperature to 50.0 °C with a hold time of 60.0 minutes and 0 seconds".
         """
-        import re
         for text in self.thermal:
             temps = re.findall(r"([\d.]+)\s*°C", text)
             if not any(abs(float(t) - celsius) <= tol_c for t in temps):
@@ -80,9 +80,9 @@ class ProtocolRun:
         return False
 
 
-#: Simulating is slow (seconds per protocol) and deterministic, and the same source is
-#: often submitted more than once (a retry, or several scenarios running the same
-#: reference protocol), so results are memoised per process.
+# Simulating is slow (seconds per protocol) and deterministic, and the same source is
+# often submitted more than once (a retry, or several scenarios running the same
+# reference protocol), so results are memoised per process.
 _CACHE: dict[str, "ProtocolRun"] = {}
 
 

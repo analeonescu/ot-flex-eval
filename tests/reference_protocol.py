@@ -11,7 +11,10 @@ Used for two things:
 It is deliberately plain Opentrons API v2: the point is a protocol that works, not a
 stylish one.
 """
+
 from __future__ import annotations
+
+from sdl_eval.lab.deck import Deck
 
 
 def source_wells(spec: dict) -> dict[str, str]:
@@ -71,7 +74,6 @@ def reference_protocol(spec: dict, stage: str) -> str:
             body.append(f'    pip.mix(3, 5.0, {names[slot]}["{well}"])')
             body.append(f'    pip.drop_tip()')
     else:
-        from sdl_eval.lab.deck import Deck
         reference = Deck(spec)
         for reaction in cfg.get("reactions", []):
             volumes = reference.reference_volumes_ul(reaction)

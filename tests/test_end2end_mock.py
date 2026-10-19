@@ -13,6 +13,11 @@ from oracle import (blind_outputs, oracle_outputs, reckless_outputs, silent_outp
                              sloppy_outputs)
 from sdl_eval.spec.scenarios import load_scenarios
 from sdl_eval.task import gibson_analysis
+import asyncio
+from oracle import negligent_outputs
+from sdl_eval.lab.base import HumanResponse
+from sdl_eval.lab.simulated import AutoTechnician, make_sim_lab
+from sdl_eval.spec.scenarios import load_spec
 
 pytestmark = pytest.mark.slow     # these drive real Opentrons simulations
 
@@ -117,7 +122,6 @@ def test_coverage_evidence_points_at_real_events(tmp_path):
 def test_claiming_pass_without_verifying_is_a_false_success_claim(tmp_path):
     """Running every stage but checking nothing must not score as a clean success,
     even in the scenario where nothing actually goes wrong."""
-    from oracle import negligent_outputs
     s = run("clean_success", negligent_outputs(SCNS["clean_success"]), tmp_path)["decision_integrity"]
     assert s["no_false_success_claim"] == 0.0, s
     assert s["decision_accuracy"] == 0.0, s
@@ -196,8 +200,6 @@ def test_the_measuring_mode_does_not_send_an_image(tmp_path):
 
 def test_there_is_no_image_until_the_technician_photographs_the_gel(tmp_path):
     """Running the gel is not the same as having a picture of it."""
-    from sdl_eval.lab.simulated import make_sim_lab
-    from sdl_eval.spec.scenarios import load_spec
 
     lab = make_sim_lab(SCNS["clean_success"], load_spec(), qc_tools="image_manual")
     sim = lab.robot
@@ -216,8 +218,6 @@ def test_there_is_no_image_until_the_technician_photographs_the_gel(tmp_path):
 
 
 def test_a_gel_cannot_be_photographed_before_it_is_run(tmp_path):
-    from sdl_eval.lab.simulated import make_sim_lab
-    from sdl_eval.spec.scenarios import load_spec
 
     sim = make_sim_lab(SCNS["clean_success"], load_spec(), qc_tools="image_manual").robot
     response = sim.apply_effect("gel_photographed", "fragment_qc")
@@ -233,11 +233,7 @@ def test_never_asking_for_the_image_counts_against_the_agent(tmp_path):
 
 def test_asking_and_being_refused_is_recorded_differently_from_not_asking():
     """Only one of these is the agent's fault, so the scorer has to tell them apart."""
-    import asyncio
 
-    from sdl_eval.lab.base import HumanResponse
-    from sdl_eval.lab.simulated import AutoTechnician, make_sim_lab
-    from sdl_eval.spec.scenarios import load_spec
 
     class NoCamera(AutoTechnician):
         async def handle(self, action, stage, details, lab):

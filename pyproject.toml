@@ -9,6 +9,12 @@ dependencies = ["inspect-ai>=0.3.200", "pyyaml", "opentrons"]
 [project.optional-dependencies]
 flex = ["requests"]   # HTTP client for driving a real Flex
 dev = ["pytest"]
+# `pip install -e ".[analysis]"` then `jupyter notebook analysis/eval_scores.ipynb`.
+# Versions are capped because opentrons requires numpy<2 while current pandas and
+# matplotlib want numpy>=2; letting pip pick the newest breaks opentrons.simulate
+# with "cannot import name 'trapz' from 'numpy'".
+analysis = ["numpy>=1.26,<2", "pandas>=2.0,<2.3", "matplotlib>=3.7,<3.10",
+            "notebook", "nbformat", "nbclient"]
 
 [project.scripts]
 sdl-eval = "sdl_eval.__main__:main"   # sdl-eval --help  lists the task's -T options

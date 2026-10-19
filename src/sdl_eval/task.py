@@ -21,6 +21,7 @@ from inspect_ai import Task, task
 from inspect_ai.agent import as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.solver import Generate, TaskState, solver
+from inspect_ai.tool import python
 from inspect_ai.util import store
 
 from sdl_eval.trace import tools as T
@@ -29,6 +30,7 @@ from sdl_eval.lab.simulated import make_sim_lab
 from sdl_eval.spec.prompts import build_system_prompt
 from sdl_eval.lab.qc_harness import build_harness
 from sdl_eval.spec.scenarios import load_scenarios, load_spec
+from sdl_eval.trace.human_cli import CliTechnician, InterventionLog
 from sdl_eval.score.scorers import (calculation_accuracy, decision_integrity, handoff_behaviour,
                               protocol_correctness, protocol_quality, qc_analysis,
                               taxonomy_coverage)
@@ -41,7 +43,6 @@ def build_technician(human: str, judge_model: str | None, run_id: str):
     if human == "cli":
         # One clipboard at a time: run with --max-samples 1, or prompts from different
         # samples interleave and the technician cannot tell which is which.
-        from sdl_eval.trace.human_cli import CliTechnician, InterventionLog
         return CliTechnician(judge_model=judge_model, log=InterventionLog(run_id=run_id))
     raise ValueError(f"unknown human mode '{human}'; expected 'auto' or 'cli'")
 
@@ -91,7 +92,8 @@ def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_p
       auto - scripted technician, every request succeeds instantly (default)
       cli  - a real person types what they did at the terminal; an LLM judge turns that
              report into a lab effect, and each one is timed and written to
-             logs/human_interventions.jsonl (see human_cli.py)
+             logs/human_<scenario>-<epoch>_<timestamp>.jsonl, one file per sample
+             (see human_cli.py)
     human_judge_model: model that interprets technician reports (default: the eval model)
     """
     spec, scns = load_spec(), load_scenarios()
@@ -111,7 +113,6 @@ def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_p
             tools.append(T.measure_gel_lane())
         scorers.append(qc_analysis())
     if enable_python:
-        from inspect_ai.tool import python
         tools.append(python())
     return Task(
         dataset=[Sample(id=i, input="Begin the experiment.", metadata={"scenario": i}) for i in ids],

@@ -17,20 +17,9 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-def _repo_root() -> Path:
-    """Walk up to the directory holding configs/ and data/.
+from sdl_eval.paths import DATA
 
-    Searched rather than counted in `parents[n]`, so moving this module between
-    subpackages cannot silently point it at the wrong directory.
-    """
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "configs").is_dir() and (parent / "data").is_dir():
-            return parent
-    raise RuntimeError("could not locate the repo root (no parent holds configs/ and data/)")
-
-
-ROOT = _repo_root()
-DEFAULT_CSV = ROOT / "data" / "ground_truth.csv"
+DEFAULT_CSV = DATA / "ground_truth.csv"
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,9 @@ from sdl_eval.__main__ import main, render_help
 from sdl_eval.lab.qc_harness import MODES
 from sdl_eval.spec.scenarios import load_scenarios
 from sdl_eval.task import gibson_analysis
+import click
+from inspect_ai._cli.eval import eval_command
+from sdl_eval.__main__ import render_inspect_flags
 
 HELP = render_help()
 
@@ -44,10 +47,7 @@ def test_help_exits_cleanly_and_anything_else_does_not(capsys):
 
 def test_all_mode_lists_inspect_flags_read_from_inspect_itself():
     """Read off Inspect's own click command, so the list cannot go stale."""
-    import click
-    from inspect_ai._cli.eval import eval_command
 
-    from sdl_eval.__main__ import render_inspect_flags
 
     text = render_inspect_flags()
     visible = [p for p in eval_command.params
@@ -59,7 +59,6 @@ def test_all_mode_lists_inspect_flags_read_from_inspect_itself():
 
 
 def test_all_mode_groups_the_flags():
-    from sdl_eval.__main__ import render_inspect_flags
 
     text = render_inspect_flags()
     for group in ("Model", "Task and samples", "Limits and retries", "Logging and display"):

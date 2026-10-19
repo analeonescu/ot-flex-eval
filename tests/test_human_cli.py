@@ -6,6 +6,7 @@ though a physical step had happened.
 """
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import pytest
 from inspect_ai.model import ModelOutput, get_model
@@ -13,6 +14,11 @@ from inspect_ai.model import ModelOutput, get_model
 from sdl_eval.lab.simulated import SimulatedLab, make_sim_lab
 from sdl_eval.trace.human_cli import CliTechnician, Interpretation, InterventionLog, parse_judgement
 from sdl_eval.spec.scenarios import load_scenarios, load_spec
+import io
+import sys
+import threading
+from sdl_eval.paths import ROOT
+from sdl_eval.trace.human_cli import intervention_log_path, read_report_from_terminal
 
 EFFECTS = SimulatedLab.EFFECTS
 SPEC = load_spec()
@@ -164,7 +170,6 @@ def test_the_report_is_read_on_the_calling_thread():
     running it. Read from a worker thread (asyncio.to_thread) the display is never
     suspended, Textual keeps the keyboard, and nothing the technician types arrives.
     """
-    import threading
 
     seen: dict[str, threading.Thread] = {}
 
@@ -187,10 +192,7 @@ def test_a_report_can_be_submitted_without_a_running_eval():
     Without the fallback `input_screen()` raises "console input function called outside
     of running evaluation" and the report can never be submitted.
     """
-    import io
-    import sys
 
-    from sdl_eval.trace.human_cli import read_report_from_terminal
 
     stdin = sys.stdin
     sys.stdin = io.StringIO("loaded it\nnoticed a bubble\n.\n")
@@ -203,10 +205,7 @@ def test_a_report_can_be_submitted_without_a_running_eval():
 
 @pytest.mark.parametrize("token", [".", "END", "end", "submit", "/done"])
 def test_each_submit_token_ends_the_report(token):
-    import io
-    import sys
 
-    from sdl_eval.trace.human_cli import read_report_from_terminal
 
     stdin = sys.stdin
     sys.stdin = io.StringIO(f"did the thing\n{token}\nthis must not be read\n")
@@ -219,10 +218,7 @@ def test_each_submit_token_ends_the_report(token):
 
 def test_square_brackets_in_the_details_do_not_break_the_form():
     """Rich would read '[B1]' as a markup tag and swallow the rest of the line."""
-    import io
-    import sys
 
-    from sdl_eval.trace.human_cli import read_report_from_terminal
 
     stdin = sys.stdin
     sys.stdin = io.StringIO("ok\n.\n")
@@ -231,3 +227,51 @@ def test_square_brackets_in_the_details_do_not_break_the_form():
     finally:
         sys.stdin = stdin
     assert report == "ok"
+
+
+# ------------------------------------------------- the log goes where the repo is
+
+def test_the_intervention_log_is_anchored_to_the_repo_not_the_cwd():
+    """A relative path would scatter records wherever the eval was launched from."""
+    path = intervention_log_path("clean_success-1")
+    assert path.parent == ROOT / "logs"
+    assert path.is_absolute()
+
+
+def test_each_sample_gets_its_own_file():
+    """One shared file made six concurrent samples indistinguishable in the log."""
+    a = intervention_log_path("clean_success-1")
+    b = intervention_log_path("round2_run_error-1")
+    assert a != b
+    assert a.name.startswith("human_clean_success-1_") and a.suffix == ".jsonl"
+    assert b.name.startswith("human_round2_run_error-1_")
+
+
+def test_the_filename_carries_the_scenario_epoch_and_time():
+    when = datetime(2026, 10, 16, 14, 30, 5, tzinfo=timezone.utc)
+    assert intervention_log_path("round1_ambiguous-2", when).name == \
+        "human_round1_ambiguous-2_2026-10-16T143005.jsonl"
+
+
+def test_separate_runs_of_one_scenario_do_not_share_a_file():
+    early = intervention_log_path("clean_success-1", datetime(2026, 10, 16, 9, 0, tzinfo=timezone.utc))
+    late = intervention_log_path("clean_success-1", datetime(2026, 10, 16, 17, 0, tzinfo=timezone.utc))
+    assert early != late
+
+
+@pytest.mark.parametrize("run_id", ["", "a/b", "..", "x y"])
+def test_an_odd_run_id_still_yields_a_usable_filename(run_id):
+    name = intervention_log_path(run_id).name
+    assert "/" not in name and name.endswith(".jsonl")
+    assert name.startswith("human_")
+
+
+def test_constructing_a_log_creates_no_directory(tmp_path):
+    """`task.py` builds a throwaway technician just to validate -T human=; that
+    preflight must not leave an empty logs/ behind."""
+    target = tmp_path / "nowhere" / "human.jsonl"
+    InterventionLog(path=target, run_id="preflight")
+    assert not target.parent.exists()
+
+    InterventionLog(path=target, run_id="real").write({"stage": "s"})
+    assert target.exists()

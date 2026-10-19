@@ -223,7 +223,8 @@ __marimo__/
 # macOS
 .DS_Store
 
-# eval + technician logs are run output; keep what you mean to keep
-logs/*.eval
-!logs/2026-10-05T13-17-36*.eval
-logs/human_interventions.jsonl
+# eval + technician logs are run output
+#logs/*.eval
+#!logs/2026-10-05T13-17-36*.eval
+# per-sample technician logs: human_<scenario>-<epoch>_<timestamp>.jsonl
+#logs/human_*.jsonl

@@ -1,13 +1,14 @@
-"""Real Opentrons Flex robot channel (HTTP API).  STUB — HOOK[flex-http].
+"""Real Opentrons Flex robot channel (HTTP API).  Can be altered using HOOK[flex-http].
 
 Endpoints below follow the Flex robot server HTTP API (default port 31950,
-header `Opentrons-Version: 3`).  Verify paths/payloads against your robot's
+header `Opentrons-Version: 3`).  
+
+IMPORTANT: Verify paths/payloads against your robot's
 own docs at http://<robot-ip>:31950/openapi before relying on them.
 """
 from __future__ import annotations
-
 from sdl_eval.lab.base import RunState, ValidationResult
-
+import requests
 
 class OpentronsFlexRobot:
     def __init__(self, host: str, port: int = 31950, simulate_first: bool = True):
@@ -17,7 +18,6 @@ class OpentronsFlexRobot:
         self._stage_of_protocol: dict[str, str] = {}
 
     def _req(self, method: str, path: str, **kw):
-        import requests  # lazy: optional dependency
         r = requests.request(method, self.base + path, headers=self.headers, timeout=30, **kw)
         r.raise_for_status()
         return r.json()

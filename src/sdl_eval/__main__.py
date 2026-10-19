@@ -11,6 +11,10 @@ import inspect as _inspect
 import sys
 import textwrap
 
+from sdl_eval.lab.qc_harness import MODES
+from sdl_eval.spec.scenarios import load_scenarios
+from sdl_eval.task import gibson_analysis
+
 TASK_FILE = "src/sdl_eval/task.py"
 
 
@@ -36,9 +40,6 @@ def _docstring_options(func) -> dict[str, str]:
 
 def _choices() -> dict[str, list[str]]:
     """Allowed values, read from wherever they are actually defined."""
-    from sdl_eval.lab.qc_harness import MODES
-    from sdl_eval.spec.scenarios import load_scenarios
-
     return {
         "backend": ["sim", "flex (not implemented)"],
         "qc_tools": list(MODES),
@@ -49,8 +50,6 @@ def _choices() -> dict[str, list[str]]:
 
 
 def render_help() -> str:
-    from sdl_eval.task import gibson_analysis
-
     signature = _inspect.signature(gibson_analysis)
     descriptions = _docstring_options(gibson_analysis)
     choices = _choices()

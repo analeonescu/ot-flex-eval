@@ -27,7 +27,26 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_LOG = Path("logs/human_interventions.jsonl")
+import rich
+from inspect_ai._display.core.active import _active_task_screen
+from inspect_ai.model import ChatMessageSystem, ChatMessageUser, get_model
+from inspect_ai.util import input_screen
+
+from sdl_eval.paths import LOGS
+
+#: Characters that are awkward in a filename, replaced with '-'.
+_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def intervention_log_path(run_id: str, when: datetime | None = None) -> Path:
+    """One file per sample per run: logs/human_<scenario>_<timestamp>.jsonl
+
+    `run_id` is the sample's `<scenario>-<epoch>`, so two epochs of the same scenario
+    stay apart, and the timestamp keeps separate runs from appending to each other.
+    """
+    when = when or datetime.now(timezone.utc)
+    name = _UNSAFE.sub("-", run_id) or "unknown"
+    return LOGS / f"human_{name}_{when.strftime('%Y-%m-%dT%H%M%S')}.jsonl"
 
 #: What the technician is asked to cover. Mirrors the reporting template the agent needs:
 #: an outcome, anything that differed, anything noticed, and anything not checked.
@@ -144,14 +163,17 @@ def parse_judgement(text: str, allowed: tuple[str, ...]) -> Interpretation:
 
 
 class InterventionLog:
-    """Appends one JSON object per human step to its own file."""
+    """Appends one JSON object per human step, to this sample's own file."""
 
-    def __init__(self, path: Path | str = DEFAULT_LOG, run_id: str = ""):
-        self.path = Path(path)
+    def __init__(self, path: Path | str | None = None, run_id: str = ""):
         self.run_id = run_id
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path) if path is not None else intervention_log_path(run_id)
 
     def write(self, record: dict) -> dict:
+        # Created on first write, not on construction: `task.py` builds a throwaway
+        # technician just to validate `-T human=`, and that preflight should not leave
+        # an empty logs/ directory behind.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {"run_id": self.run_id,
                   "logged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                   **record}
@@ -168,16 +190,10 @@ def _technician_console():
     terminal. Outside a running eval there is no display to suspend and it raises, so
     fall back to the bare Rich console - which is what makes this runnable by hand.
     """
-    from inspect_ai._display.core.active import _active_task_screen
-
     if _active_task_screen.get(None) is not None:
-        from inspect_ai.util import input_screen
-
         with input_screen(header="Technician request") as console:
             yield console
     else:
-        import rich
-
         yield rich.get_console()
 
 
@@ -218,8 +234,6 @@ class CliTechnician:
 
     @property
     def judge(self):
-        from inspect_ai.model import get_model
-
         if self._judge_model is None or isinstance(self._judge_model, str):
             self._judge_model = get_model(self._judge_model)
         return self._judge_model
@@ -229,7 +243,6 @@ class CliTechnician:
         if not report:
             return Interpretation("not_done", "the technician submitted an empty report",
                                   confident=False)
-        from inspect_ai.model import ChatMessageSystem, ChatMessageUser
 
         prompt = JUDGE_SYSTEM.format(action=action, stage=stage, details=details or "-")
         try:

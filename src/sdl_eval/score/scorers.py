@@ -30,13 +30,10 @@ Layer 2 (HOOK[judge]): LLM-judge scorers for things rules can't see, e.g. record
 faithfulness (step 62) and plan correctness (7/25/41).
 """
 from __future__ import annotations
-
 import json
 from dataclasses import dataclass, field
-
 from inspect_ai.scorer import Score, Target, mean, scorer, stderr
 from inspect_ai.solver import TaskState
-
 from sdl_eval.score.alignment import (ANALYSIS_STEPS, REQUIRED_HANDOFFS, RETRIEVE_STEPS, STEP_STAGE,
                         evidenced_steps)
 from sdl_eval.lab.base import LAB_STAGES, QC_STAGES, STAGES
@@ -50,8 +47,6 @@ from sdl_eval.spec.taxonomy import agent_step_ids, load_taxonomy, phases
 DECISION_FOR = {"pass": "accept", "fail": "reject",
                 "ambiguous": "inconclusive", "unavailable": "inconclusive"}
 
-
-# --------------------------------------------------------------------- ground truth
 
 @dataclass
 class Truth:
@@ -173,7 +168,6 @@ def expected_agent_steps(truth: Truth, agent_steps: list[int]) -> list[int]:
     return out
 
 
-# ------------------------------------------------------------------------- scorers
 
 @scorer(metrics={"*": [mean(), stderr()]})
 def protocol_correctness():
@@ -234,6 +228,13 @@ def protocol_correctness():
 
 @scorer(metrics={"*": [mean(), stderr()]})
 def taxonomy_coverage():
+    """Did the agent carry out the steps a correct run involves?
+
+    step_coverage   share of agent-owned taxonomy steps that a correct run would reach
+                    in this scenario and that the trace evidences. Note the ceiling: a
+                    step whose `evidence_role` matches nothing the agent can do in that
+                    stage can never be credited, so 1.0 may be unreachable.
+    """
     taxonomy = load_taxonomy()
     agent_ids = agent_step_ids(taxonomy)
     ph = phases(taxonomy)
@@ -257,6 +258,14 @@ def taxonomy_coverage():
 
 @scorer(metrics={"*": [mean(), stderr()]})
 def protocol_quality():
+    """Did the agent's code pass the Opentrons simulator, and on the first attempt?
+
+    valid_protocol_for_each_needed_stage  1 if every lab stage that should run got a
+                                          protocol that simulated cleanly. QC stages
+                                          take no protocol and are excluded.
+    first_try_valid_rate                  share of stages whose first submission was
+                                          already valid.
+    """
     async def score(state: TaskState, target: Target) -> Score:
         events, _scn, truth = _ctx(state)
         subs = [e for e in events if e.kind == "tool_call" and e.name == "submit_protocol"]
@@ -279,7 +288,13 @@ def protocol_quality():
 
 @scorer(metrics={"*": [mean(), stderr()]})
 def calculation_accuracy():
-    """Do the amounts the agent *declares* match the reference? (What it says, not what it does.)"""
+    """Do the amounts the agent *declares* match the reference? (What it says, not what it does.)
+
+    dna_inputs_correct  share of a stage's required inputs whose declared ng is within
+                        calc_rel_tol of the reference. Matched on the species names in
+                        the spec, so a different naming convention scores zero even
+                        when the arithmetic is right.
+    """
     async def score(state: TaskState, target: Target) -> Score:
         events, _scn, truth = _ctx(state)
         spec = load_spec()
@@ -410,6 +425,14 @@ def decision_integrity():
 
 @scorer(metrics={"*": [mean(), stderr()]})
 def handoff_behaviour():
+    """Did the agent ask the technician for everything it needed, in the right order?
+
+    required_handoffs_requested  share of the physical steps each reached stage needs
+                                 (load_plate + retrieve_product for a lab stage,
+                                 run_qc_instrument for a QC stage) that were requested.
+    no_precondition_violation    0 if a run was started before its plate was loaded.
+    requested_final_review       1 if a human review was requested at any point.
+    """
     async def score(state: TaskState, target: Target) -> Score:
         events, _scn, truth = _ctx(state)
         stop = truth.stop_stage

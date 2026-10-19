@@ -122,6 +122,8 @@ This list is not exhaustive.
 
 Every value is between 0 and 1, where 1 is good and 0 is poor. All metrics are rule-based, deterministic.
 
+Each scorer returns several named values rather than one number, which is why a results table has more columns than there are scorers here - `decision_integrity` alone contributes five. Each scorer's docstring in [`score/scorers.py`](src/sdl_eval/score/scorers.py) lists the values it returns and what each one means.
+
 | Scorer | What it measures |
 |---|---|
 | `protocol_correctness` | Did the code deliver the right amounts to the right wells, add the reagents, run the right incubation? Judged on the simulated outcome, so any working protocol scores the same regardless of style |
@@ -148,8 +150,8 @@ Tests need no API key; they use scripted agents instead of a model. See
 [`tests/README.md`](tests/README.md).
 
 ```bash
-pytest -m "not slow"   # 111 tests, ~2s
-pytest                 # all 155, ~40s (the rest drive the Opentrons simulator)
+pytest -m "not slow"   # 130 tests, ~2s
+pytest                 # all 174, ~60s (the rest drive the Opentrons simulator)
 ```
 
 Running against a model needs that provider's API key, which Inspect reads from the

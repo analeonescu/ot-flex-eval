@@ -1,29 +1,25 @@
-"""Deck state: what is in each well, and what the chemistry does to it.
+"""Deck state, i.e., what is in each well, and what the chemistry does to it.
 
-This is what makes the agent's code matter. For one stage:
+For one stage:
 
     protocol source -> protocol_run.simulate_protocol -> transfers
                     -> Deck.apply_transfers   (contents move between wells)
-                    -> Deck.run_stage         (did each reaction actually work?)
+                    -> Deck.run_stage         (did each process actually work?)
                     -> Deck.bands             (what QC would therefore see)
 
-A protocol that pipettes the wrong fragment, the wrong amount, or skips the
-incubation produces wrong QC data *because of that*, not because a scenario file
-said so. Scenario faults are layered on top (see simulated.py).
+Scenario faults are layered on top (see simulated.py).
 
 Amounts are tracked in nanograms per species, converted to pmol for stoichiometry
 (pmol = ng * 1000 / (bp * 650)), so a Gibson assembly is limited by its scarcest
-input in molar terms, like the real reaction. The experiment's chemistry lives in
+input in molar terms, like the real process. The experiment's chemistry lives in
 configs/task_spec.yaml; this module is the engine that applies it.
 """
 from __future__ import annotations
-
 from dataclasses import dataclass, field
-
 from sdl_eval.lab.calculations import ng_from_pmol, pmol_from_ng, within
 
-#: A species below this many ng is invisible on a gel (and counts as "not added").
-DETECTION_NG = 1.0
+# A species below this many ng is invisible on a gel (and counts as "not added").
+LIMIT_NG = 1.0
 
 
 @dataclass
@@ -44,7 +40,7 @@ class Well:
 class Reaction:
     """Outcome of one reaction (one well)."""
     well: str
-    outcome: str                                                 # complete | partial | none
+    outcome: str # complete | partial | none
     reasons: list[str] = field(default_factory=list)
     delivered_ng: dict[str, float] = field(default_factory=dict)
     required_ng: dict[str, float] = field(default_factory=dict)
@@ -67,8 +63,7 @@ class Deck:
             for name, ng in contents.items():
                 well.add(name, float(ng))
             self.wells[key] = well
-
-    # ------------------------------------------------------------------ contents
+# contents:
     def well(self, key: str) -> Well:
         return self.wells.setdefault(key, Well())
 
@@ -76,7 +71,7 @@ class Deck:
         return {n: round(ng, 2) for n, ng in self.well(key).species.items() if ng > 1e-6}
 
     def reset_stage(self, stage: str) -> list[str]:
-        """Empty the wells a stage uses, as swapping in fresh labware would.
+        """Empties the wells a stage uses, as swapping in fresh labware would.
 
         Covers the reaction wells and the tubes its product is harvested into, so a
         re-run starts from the same state the first run did instead of pipetting on
@@ -89,7 +84,6 @@ class Deck:
             self.wells[key] = Well()
         return keys
 
-    # ----------------------------------------------------------------- transfers
     def apply_transfers(self, transfers) -> list[str]:
         """Move liquid, and a proportional share of each species, between wells.
 
@@ -117,7 +111,8 @@ class Deck:
             dest.volume_ul += volume
         return warnings
 
-    # ----------------------------------------------------------------- chemistry
+# analytical chemistry:
+
     def required_ng(self, reaction: dict) -> dict[str, float]:
         """Reference ng for each DNA input of a reaction: the answer key for its calculation step.
 
@@ -145,7 +140,7 @@ class Deck:
         reagents, and the right incubation or thermocycling. A missing input, reagent or
         incubation gives "none". Inputs present but outside tolerance give "partial":
         product forms at low yield with unreacted input left over, which is exactly what
-        an ambiguous gel looks like.
+        an ambiguous gel looks like later on.
         """
         key = reaction["well"]
         well = self.well(key)
@@ -154,11 +149,11 @@ class Deck:
 
         required = self.required_ng(reaction)
         delivered = {name: round(well.ng(name), 2) for name in required}
-        missing = [n for n, ng in delivered.items() if ng < DETECTION_NG]
+        missing = [n for n, ng in delivered.items() if ng < LIMIT_NG]
         off_ratio = [n for n, ng in delivered.items() if n not in missing and not within(ng, required[n], tol)]
 
         for name in (reaction.get("reagents") or {}):
-            if well.ng(name) < DETECTION_NG:
+            if well.ng(name) < LIMIT_NG:
                 reasons.append(f"{name} missing from {key}")
 
         if (inc := reaction.get("incubate")) and not run.holds_temperature(
@@ -190,7 +185,7 @@ class Deck:
         efficiency = float(reaction.get("efficiency", 0.95)) * (0.2 if off_ratio else 1.0)
         product_pmol *= efficiency
 
-        for name in required:                      # consume inputs in molar proportion
+        for name in required:  # consume inputs in molar proportion
             if consumed_pmol:
                 used_ng = ng_from_pmol(consumed_pmol * efficiency, int(self.species[name]["bp"]))
                 well.species[name] = max(0.0, well.ng(name) - used_ng)
@@ -216,26 +211,32 @@ class Deck:
         for item in harvest:
             dest, name = item["to"], item["species"]
             pooled: dict[str, float] = {}
+
             # Only the well(s) where this species was actually made: purifying frag_A
             # must not sweep up the contents of the frag_B reaction next to it.
+
             made_in = [r for r in cfg.get("reactions", []) if r["product"]["name"] == name]
             for reaction in made_in:
                 for species, ng in self.well(reaction["well"]).species.items():
                     if self.species.get(species, {}).get("bp"):   # a clean-up keeps DNA, not mixes
                         pooled[species] = pooled.get(species, 0.0) + ng
+            
             # Normalise on the expected product when it is there. When it is not (a failed
             # assembly, or an artifact of the wrong size), the technician still purifies
             # whatever DNA is in the well - they cannot see what it is - so the next gel
             # shows the artifact rather than an empty lane.
+
             total = sum(pooled.values())
             available = pooled.get(name, 0.0) or total
-            if total < DETECTION_NG:
+            if total < LIMIT_NG:
                 continue
             conc, volume = float(item["conc_ng_ul"]), float(item["volume_ul"])
+
             # Normalise to the stated concentration where there is enough product, and
             # carry everything else across in proportion - a column clean-up removes
             # enzymes and primers, not unreacted fragments, so a partial assembly still
             # shows its leftovers on the next gel.
+
             kept = min(available, conc * volume)
             ratio = kept / available
             well = self.well(dest)
@@ -243,13 +244,13 @@ class Deck:
             well.species = {s: ng * ratio for s, ng in pooled.items() if ng * ratio >= 1e-6}
         return harvest[0]["to"] if harvest else None
 
-    # ----------------------------------------------------------------------- QC
+# qc:
     def bands(self, well_keys) -> list[dict]:
         """What a gel of these wells would show: one band per visible DNA species."""
         pooled: dict[str, float] = {}
         for key in well_keys:
             for name, ng in self.well(key).species.items():
-                if ng >= DETECTION_NG and self.species.get(name, {}).get("bp"):
+                if ng >= LIMIT_NG and self.species.get(name, {}).get("bp"):
                     pooled[name] = pooled.get(name, 0.0) + ng
         total = sum(pooled.values()) or 1.0
         return [{"bp": int(self.species[n]["bp"]), "rel_intensity": round(ng / total, 3)}
@@ -270,8 +271,10 @@ class Deck:
         matched: list[int] = []
         missing: list[int] = []
         for want in expected_bp:
+
             # Closest band wins, and each band matches at most one expectation: with a
             # loose tolerance a 4700 bp intermediate would otherwise "be" a 5000 bp product.
+            
             candidates = [b for b in bands
                           if abs(b["bp"] - want) <= size_tol * want and b["bp"] not in matched]
             hit = min(candidates, key=lambda b: abs(b["bp"] - want), default=None)

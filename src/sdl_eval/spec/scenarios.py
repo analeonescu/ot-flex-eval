@@ -12,10 +12,10 @@ from pathlib import Path
 
 import yaml
 
-from sdl_eval.spec.taxonomy import ROOT
+from sdl_eval.paths import CONFIGS
 
-SCENARIOS_YAML = ROOT / "configs" / "scenarios.yaml"
-SPEC_YAML = ROOT / "configs" / "task_spec.yaml"
+SCENARIOS_YAML = CONFIGS / "scenarios.yaml"
+SPEC_YAML = CONFIGS / "task_spec.yaml"
 
 
 def load_spec(path: Path = SPEC_YAML) -> dict:
