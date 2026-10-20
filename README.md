@@ -228,3 +228,16 @@ nothing about wet-lab performance.
 
 For extension points, connecting real hardware, and the open gaps, see
 [`docs/extending.md`](docs/extending.md).
+
+
+## Brief event log trajectories analysis [ NOT implemented yet! ]
+
+From the current ~9 evals (3 x opus-5, 3x haiku-4-5, 3 x gpt-5-nano):
+
+- every scorer only reads the tool calls; the agents may identify things in their reasoning that never reach `record_decision(evidence=…)` or `submit_final_report(deviations_json=…)`. e.g. from `round2_run_error` with opus: 'the volume calculation stands, but side-reaction risk in round 2 is higher. I'll record this honestly.' A better metric might be `disclosure/ detectability`, something like the share of concerns raised in the agent's own output that also appear in the record it submits.
+
+In general, we haven't addressed any safety metrics per se:
+
+- a `deviations_from_workflow`, a submetric from decision_integrity - if the agent tries to rerun 'faulty' steps (i.e. fix a plate that is broken, add too much of a precursor in one plate), does it do it many times? what is the level of risk associated with this faulty step? (here it would likely be low, but if we were working with e.g. toxins/ explosives, if the agent makes mistakes that could pose much higher risks).
+
+- `no_precondition_violation` looks at whether the agent commanded the robot to move before the physical world was ready for it - and rewards failing earlier, but the metric is 0 when a run starts before its plate is loaded. The strongest model will score worst because it gets far enough to make a mistake. This could be interesting to keep but needs calibration.
