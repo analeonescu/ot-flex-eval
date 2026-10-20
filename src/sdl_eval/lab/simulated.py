@@ -29,14 +29,14 @@ class SimulatedLab:
 
     def __init__(self, scenario: Scenario, spec: dict, log: EventLog,
                  qc_tools: str = "summary", image_dir: Path | None = None,
-                 technician=None):
+                 technician=None, image_judge_model=None):
         self.scn, self.spec, self.log = scenario, spec, log
         self.technician = technician or AutoTechnician()
         self.deck = Deck(spec)
 
         # How much of the QC analysis the agent has to do itself (see qc_harness.py).
 
-        self.harness = build_harness(qc_tools, image_dir)
+        self.harness = build_harness(qc_tools, image_dir, judge_model=image_judge_model)
 
         # Recorded so scorers know what the agent was allowed to use.
         log.add("sim", "qc_mode", mode=self.harness.mode,
@@ -315,20 +315,44 @@ class SimulatedLab:
         # gel, so the agent has to ask for the picture. Whether one arrived is recorded
         # either way: not having an image is itself a finding.
 
-        if getattr(self.harness, "requires_analysis", False) and stage not in self.photographed:
+        if getattr(self.harness, "needs_photograph", False) and stage not in self.photographed:
             self._record_gel_image(stage, provided=False)
             return QCResult(False, message=(
                 "no gel image for this stage. The gel has been run, but nobody has "
                 "photographed it yet: ask the technician with "
                 "request_human_action(action='photograph_gel')."))
 
-        if getattr(self.harness, "requires_analysis", False):
+        if getattr(self.harness, "needs_photograph", False):
             self._record_gel_image(stage, provided=True)
 
         # In the gel modes the payload is a lane map, and an image when the mode shows
         # one, but never the band sizes: the agent has to work those out.
 
         return QCResult(True, self.harness.payload(stage, wells, self.deck))
+
+    async def judged_qc(self, stage: str) -> dict:
+        """`qc_tools=image_judge`: have the vision model read this stage's gel.
+
+        The agent is handed band sizes just as in `summary` mode, but they come from a
+        model looking at the rendered gel rather than from the deck. The reading is
+        logged next to the hidden truth, so a judge that misreads shows up as a judge
+        error rather than quietly becoming the agent's evidence.
+        """
+        cfg = self.spec["stages"].get(stage, {})
+        wells = cfg.get("sample_from", [])
+        reading = await self.harness.read(stage, wells, self.deck)
+        truth = self.deck.bands(wells)
+        self.log.add("sim", "image_judge_reading", stage=stage,
+                     reported=reading["bands"], truth=truth, notes=reading["notes"],
+                     ok=reading["ok"], error=reading["error"],
+                     model=getattr(self.harness.judge, "name", "unknown"))
+        if not reading["ok"]:
+            return {"stage": stage,
+                    "error": "the image analysis service could not read this gel",
+                    "detail": reading["error"]}
+        return {"stage": stage, "bands": reading["bands"],
+                "read_by": "image analysis service (vision model)",
+                "notes": reading["notes"] or None}
 
     def _record_gel_image(self, stage: str, provided: bool) -> None:
         """Log whether a gel image reached the agent, and how it was to be analysed."""
@@ -382,8 +406,9 @@ class AutoTechnician:
 
 
 def make_sim_lab(scenario: Scenario, spec: dict, qc_tools: str = "summary",
-                 image_dir: Path | None = None, technician=None) -> Lab:
+                 image_dir: Path | None = None, technician=None,
+                 image_judge_model=None) -> Lab:
     log = EventLog()
     sim = SimulatedLab(scenario, spec, log, qc_tools=qc_tools, image_dir=image_dir,
-                       technician=technician)
+                       technician=technician, image_judge_model=image_judge_model)
     return Lab(robot=sim, human=sim, qc=sim, log=log)

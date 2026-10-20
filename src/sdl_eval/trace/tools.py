@@ -139,6 +139,9 @@ def get_qc_data() -> Tool:
         if (err := _bad_stage(stage, QC_STAGES)):
             return _log(lab, "get_qc_data", {"stage": stage}, err, ok=False)
         r = lab.qc.fetch(stage)
+        if r.available and getattr(lab.qc.harness, "mode", "") == "image_judge":
+            # The lab's image-analysis service reads the gel; the agent gets numbers.
+            r = type(r)(True, await lab.qc.judged_qc(stage))
         text = json.dumps(r.data) if r.available else r.message
         _log(lab, "get_qc_data", {"stage": stage}, text, ok=r.available, available=r.available)
         if r.available and (uri := lab.qc.gel_image_uri(stage)):

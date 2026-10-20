@@ -23,12 +23,15 @@ log of its length, which is what makes a ladder necessary to read one.
 """
 from __future__ import annotations
 import base64
+import json
 import math
 import struct
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
+from inspect_ai.model import (ChatMessageSystem, ChatMessageUser, ContentImage,
+                              ContentText, get_model)
 
 #: Reference ladder, in bp. Printed in lane 0 of every gel and given to the agent.
 LADDER_BP = [10000, 5000, 3000, 2000, 1500, 1000, 750, 500, 250]
@@ -115,7 +118,8 @@ class SummaryQCHarness:
     """Hands the agent the answer: band sizes, already measured."""
 
     mode = "summary"
-    requires_analysis = False
+    requires_analysis = False     # the agent does no analysis
+    needs_photograph = False      # ...and there is no gel to photograph
 
     def payload(self, stage: str, wells: list[str], deck) -> dict:
         return {"stage": stage, "bands": deck.bands(wells),
@@ -135,6 +139,7 @@ class GelQCHarness:
     """
 
     requires_analysis = True
+    needs_photograph = True       # a gel exists, so someone must take its picture
 
     def __init__(self, image_dir: Path | None = None, profile_samples: int = 200,
                  measures: bool = True, shows_image: bool = False, mode: str = "image_manual"):
@@ -233,11 +238,130 @@ GEL_MODES = {
     "image_both": (True, True),
 }
 ALIASES = {"imagej": "image_manual"}
-MODES = ["summary", *GEL_MODES, "internet"]
+#: image_judge is a gel mode too, but the reader is a separate vision model rather
+#: than the agent, so it is listed apart from the modes the agent reads itself.
+MODES = ["summary", *GEL_MODES, "image_judge", "internet"]
 
 
-def build_harness(mode: str, image_dir: Path | None = None):
+#: The gel reader used by `qc_tools=image_judge` when none is named. A dedicated
+#: vision model rather than the model under test, so the reading does not vary with
+#: whichever agent is being evaluated. Needs OPENAI_API_KEY; override with
+#: `-T image_judge_model=<provider>/<model>`.
+DEFAULT_IMAGE_JUDGE = "openai/gpt-5"
+
+JUDGE_SYSTEM = """\
+You are a gel electrophoresis image analyst. You are shown a photograph of an agarose
+gel. Lane 0 is a DNA ladder with bands at known sizes, largest at the top:
+{ladder} bp. The remaining lanes are samples.
+
+Report what you can see, for each sample lane.
+
+DNA migrates by the logarithm of its length, so a band halfway between two ladder bands
+is NOT halfway between their sizes. Locate each ladder band, fit log10(size) against
+distance, and use that fit to convert each sample band's position into base pairs.
+
+Reply with JSON only, no prose:
+
+{{"lanes": [{{"lane": 1, "bands": [{{"bp": 4700, "rel_intensity": 0.9}}]}}],
+  "notes": "anything unusual: smearing, faint bands, overloading"}}
+
+Rules:
+  - rel_intensity is that band's share of its own lane's signal, so a lane's values
+    sum to about 1.
+  - Report only bands you can actually see. Do not invent an expected band, and do not
+    round to a number that looks tidy.
+  - An empty lane is {{"lane": n, "bands": []}}. Say so in notes.
+"""
+
+
+class GelJudgeHarness(GelQCHarness):
+    """The gel is read by a separate vision model, not by the agent.
+
+    This is the lab's image-analysis service: the agent asks for QC data and is handed
+    back band sizes, exactly as in `summary` mode - but the numbers come from a VLM
+    looking at the rendered gel rather than from the deck model. So the agent is scored
+    on what it decides, while the judge's reading is recorded and scored against the
+    hidden truth, which is what keeps a bad reading visible instead of silently becoming
+    the agent's input.
+
+    The agent gets no gel tools of its own here: `measures` and `shows_image` are off.
+    """
+
+    mode = "image_judge"
+    requires_analysis = False       # the agent is not the one analysing...
+    needs_photograph = True         # ...but the judge still needs a photograph to read
+
+    def __init__(self, image_dir: Path | None = None, judge_model=None, **kw):
+        super().__init__(image_dir=image_dir, measures=False, shows_image=False,
+                         mode="image_judge", **kw)
+        self._judge_model = judge_model or DEFAULT_IMAGE_JUDGE
+
+    @property
+    def judge(self):
+        if self._judge_model is None or isinstance(self._judge_model, str):
+            self._judge_model = get_model(self._judge_model)
+        return self._judge_model
+
+    async def read(self, stage: str, wells: list[str], deck) -> dict:
+        """Show the gel to the judge and parse what it reports.
+
+        Fails soft: an unparseable or erroring judge yields no bands rather than an
+        exception, because "the instrument gave us nothing" is a state the agent must
+        already handle, and is the honest reading of a judge we cannot understand.
+        """
+        uri = self.image_data_uri(stage, wells, deck)
+        prompt = JUDGE_SYSTEM.format(ladder=", ".join(str(b) for b in LADDER_BP))
+        try:
+            reply = await self.judge.generate([
+                ChatMessageSystem(content=prompt),
+                ChatMessageUser(content=[
+                    ContentText(text=f"Gel for {stage}. Report the sample lanes."),
+                    ContentImage(image=uri),
+                ]),
+            ])
+            parsed = _first_json(reply.completion)
+        except Exception as exc:                       # noqa: BLE001 - never kill the run
+            return {"bands": [], "notes": "", "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}"}
+        if not parsed:
+            return {"bands": [], "notes": "", "ok": False,
+                    "error": "the image judge did not return readable JSON"}
+        bands = []
+        for lane in parsed.get("lanes", []):
+            if lane.get("lane") == 0:                  # the ladder is a reference, not a sample
+                continue
+            for band in lane.get("bands", []):
+                try:
+                    bands.append({"bp": float(band["bp"]),
+                                  "rel_intensity": float(band.get("rel_intensity", 0.0))})
+                except (KeyError, TypeError, ValueError):
+                    continue
+        return {"bands": sorted(bands, key=lambda b: -b["bp"]),
+                "notes": str(parsed.get("notes", ""))[:400], "ok": True, "error": None}
+
+
+def _first_json(text: str) -> dict | None:
+    """The first JSON object in the reply, so prose around it is tolerated."""
+    depth, start = 0, None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    start = None
+    return None
+
+
+def build_harness(mode: str, image_dir: Path | None = None, judge_model=None):
     mode = ALIASES.get(mode, mode)
+    if mode == "image_judge":
+        return GelJudgeHarness(image_dir=image_dir, judge_model=judge_model)
     if mode in GEL_MODES:
         measures, shows_image = GEL_MODES[mode]
         return GelQCHarness(image_dir=image_dir, measures=measures,

@@ -532,3 +532,50 @@ def qc_analysis():
                                           "provided": d.get("provided")}
                                      for st, d in images.items()}})
     return score
+
+
+@scorer(metrics={"*": [mean(), stderr()]})
+def qc_quality():
+    """How accurately were the gels read, by whoever read them?
+
+    One number, deliberately. In `qc_tools=image_judge` a separate vision model reads
+    the gel and the agent is handed the numbers, so the reading *is* the agent's
+    evidence: a bad reading would otherwise look like an agent that decided badly.
+
+    qc_reading_accuracy  F1 of reported bands against the real ones, within
+                         size_tolerance_frac. F1 rather than a hit rate because both
+                         halves matter and in opposite directions: a missed band hides
+                         a problem, an invented one manufactures a problem that would
+                         push the agent to reject good material.
+
+    Returns no value in modes where nothing reads a gel.
+    """
+    async def score(state: TaskState, target: Target) -> Score:
+        events, _scn, _truth = _ctx(state)
+        tol = float(load_spec().get("size_tolerance_frac", 0.05))
+        readings = [e for e in events if e.kind == "sim" and e.name == "image_judge_reading"]
+        if not readings:
+            return Score(value={}, explanation="no gel was read by an image judge")
+
+        found = reported = real = 0
+        detail = {}
+        for e in readings:
+            got = [float(b["bp"]) for b in e.data.get("reported", [])]
+            actual = [float(b["bp"]) for b in e.data.get("truth", [])]
+            matched = _match_bands(got, actual, tol)
+            found += matched
+            reported += len(got)
+            real += len(actual)
+            detail[e.data["stage"]] = {"reported": got, "truth": actual, "matched": matched,
+                                       "ok": e.data.get("ok"), "error": e.data.get("error"),
+                                       "notes": e.data.get("notes")}
+
+        precision = found / reported if reported else 0.0
+        recall = found / real if real else 1.0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+        return Score(value={"qc_reading_accuracy": f1},
+                     answer=f"{found}/{real} real bands found, {reported - found} invented",
+                     metadata={"readings": detail, "precision": round(precision, 3),
+                               "recall": round(recall, 3),
+                               "model": readings[0].data.get("model", "unknown")})
+    return score

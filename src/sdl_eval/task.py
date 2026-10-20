@@ -28,12 +28,12 @@ from sdl_eval.trace import tools as T
 from sdl_eval.lab.base import STAGES
 from sdl_eval.lab.simulated import make_sim_lab
 from sdl_eval.spec.prompts import build_system_prompt
-from sdl_eval.lab.qc_harness import build_harness
+from sdl_eval.lab.qc_harness import DEFAULT_IMAGE_JUDGE, build_harness
 from sdl_eval.spec.scenarios import load_scenarios, load_spec
 from sdl_eval.trace.human_cli import CliTechnician, InterventionLog
 from sdl_eval.score.scorers import (calculation_accuracy, decision_integrity, handoff_behaviour,
-                              protocol_correctness, protocol_quality, qc_analysis,
-                              taxonomy_coverage)
+                              protocol_correctness, protocol_quality, qc_quality,
+                              qc_analysis, taxonomy_coverage)
 
 
 def build_technician(human: str, judge_model: str | None, run_id: str):
@@ -48,10 +48,10 @@ def build_technician(human: str, judge_model: str | None, run_id: str):
 
 
 def build_lab(backend: str, scenario, spec, qc_tools: str = "summary",
-              image_dir=None, technician=None):
+              image_dir=None, technician=None, image_judge_model=None):
     if backend == "sim":
         return make_sim_lab(scenario, spec, qc_tools=qc_tools, image_dir=image_dir,
-                            technician=technician)
+                            technician=technician, image_judge_model=image_judge_model)
     # HOOK[real-lab]: assemble Lab(robot=OpentronsFlexRobot(host), human=<your channel>,
     #                   qc=<your QC reader>) — see lab/base.py and lab/opentrons_flex.py.
     raise NotImplementedError(f"backend '{backend}' not wired up yet")
@@ -59,14 +59,15 @@ def build_lab(backend: str, scenario, spec, qc_tools: str = "summary",
 
 @solver
 def setup_lab(backend: str = "sim", qc_tools: str = "summary", human: str = "auto",
-              human_judge_model: str | None = None):
+              human_judge_model: str | None = None, image_judge_model: str | None = None):
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         spec, scn = load_spec(), load_scenarios()[state.metadata["scenario"]]
         lab_id = f"{state.sample_id}-{state.epoch}"
         images = Path(tempfile.gettempdir()) / "sdl_eval_gels" / str(lab_id)
         technician = build_technician(human, human_judge_model, run_id=str(lab_id))
         T.LABS[lab_id] = build_lab(backend, scn, spec, qc_tools=qc_tools, image_dir=images,
-                                   technician=technician)
+                                   technician=technician,
+                                   image_judge_model=image_judge_model)
         store().set("lab_id", lab_id)
         return state
     return solve
@@ -75,7 +76,8 @@ def setup_lab(backend: str = "sim", qc_tools: str = "summary", human: str = "aut
 @task
 def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_python: bool = False,
                qc_tools: str = "summary", human: str = "auto",
-               human_judge_model: str | None = None):
+               human_judge_model: str | None = None,
+               image_judge_model: str = DEFAULT_IMAGE_JUDGE):
     """Agent-orchestrated multi-stage lab experiment, defined by configs/task_spec.yaml.
 
     scenarios: comma-separated ids from configs/scenarios.yaml (default: all)
@@ -86,6 +88,10 @@ def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_p
       image_vlm    - the agent is shown the gel image and reads it by eye (needs a
                      vision-capable model)
       image_both   - both the image and the measuring tool
+      image_judge  - a separate vision model reads the gel and hands the agent band
+                     sizes, the way a lab's image-analysis service would. The agent
+                     does no analysis itself; the judge's reading is logged against the
+                     truth so a misread is visible (see -T image_judge_model)
       internet     - not implemented (needs a sandbox for agent-written networked code)
       ('imagej' is accepted as an old name for image_manual)
     human: who performs the physical steps
@@ -95,10 +101,14 @@ def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_p
              logs/human_<scenario>-<epoch>_<timestamp>.jsonl, one file per sample
              (see human_cli.py)
     human_judge_model: model that interprets technician reports (default: the eval model)
+    image_judge_model: vision model that reads the gel under qc_tools=image_judge.
+      A dedicated reader rather than the model under test, so the reading does not vary
+      with the agent being evaluated. Must be vision-capable; the default needs
+      OPENAI_API_KEY. Ignored in every other qc_tools mode.
     """
     spec, scns = load_spec(), load_scenarios()
     ids = scenarios.split(",") if scenarios else list(scns)
-    harness = build_harness(qc_tools)      # fails fast on an unknown or unavailable mode
+    harness = build_harness(qc_tools, judge_model=image_judge_model)   # fails fast on a bad mode
     build_technician(human, human_judge_model, run_id="preflight")   # same, for -T human=
     prompt = build_system_prompt(spec, STAGES, gel_analysis=harness.requires_analysis,
                                  measures=getattr(harness, "measures", False),
@@ -107,6 +117,9 @@ def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_p
              T.get_qc_data(), T.record_decision(), T.submit_final_report()]
     scorers = [protocol_correctness(), taxonomy_coverage(), protocol_quality(),
                calculation_accuracy(), decision_integrity(), handoff_behaviour()]
+    if qc_tools == "image_judge":
+        # The judge's reading becomes the agent's evidence, so score the reading too.
+        scorers.append(qc_quality())
     if harness.requires_analysis:
         tools.append(T.submit_gel_measurement())
         if getattr(harness, "measures", False):
@@ -116,7 +129,7 @@ def gibson_analysis(backend: str = "sim", scenarios: str | None = None, enable_p
         tools.append(python())
     return Task(
         dataset=[Sample(id=i, input="Begin the experiment.", metadata={"scenario": i}) for i in ids],
-        solver=[setup_lab(backend, qc_tools, human, human_judge_model),
+        solver=[setup_lab(backend, qc_tools, human, human_judge_model, image_judge_model),
                 as_solver(react(prompt=prompt, tools=tools))],
         scorer=scorers,
         sandbox="local" if enable_python else None,

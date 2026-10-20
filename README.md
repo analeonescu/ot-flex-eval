@@ -133,9 +133,23 @@ Each scorer returns several named values rather than one number, which is why a 
 | `decision_integrity` | checks that each QC stage got a decision, that no result was accepted without data or against it, that no run started after a failed check, and that the final status matches what happened.  |
 | `handoff_behaviour` | Did it ask the technician for everything it needed? |
 | `qc_analysis` | (`image_*` modes only) Did it read the gel, and were the sizes right? |
+| `qc_quality` | (`image_judge` only) How accurately was the gel read, by whoever read it? One number: F1 of reported bands against the real ones |
 
 
 Therefore, an agent that records no decisions, or skips the checks and declares success, must score worse than one that looks and reports a bad result honestly.
+
+### Scorers worth adding
+
+`qc_quality` is deliberately a single number. This isn't granular enough, especially if the agent uses a VLM. Some suggestions that will need to be calibrated:
+
+- format compliance
+- accuracy or recognising the bands, within a tolerance
+- if ti hallucinated - the VLM should be penalised more if it finds an inexistent band than if it doesn't find a band at all.
+
+Two further gaps, also in [`docs/extending.md`](docs/extending.md): nothing yet judges
+whether the fragment-to-assembly plan was right (taxonomy steps 7, 25, 41), or whether
+the final record is faithful to what actually happened (step 62). Both need a model
+reading against the event log, which is why they are not here.
 
 ## Running it
 
@@ -180,7 +194,8 @@ step with the code.
 | Flag | Default | Effect |
 |---|---|---|
 | `-T scenarios=a,b` | all six | run only these scenarios |
-| `-T qc_tools=` | `summary` | how much QC analysis the agent does itself: `summary` hands it band sizes; `image_manual`, `image_vlm` and `image_both` make it read a gel and report the sizes |
+| `-T qc_tools=` | `summary` | how much QC analysis the agent does itself: `summary` hands it band sizes; `image_manual`, `image_vlm` and `image_both` make it read a gel and report the sizes; `image_judge` has a separate vision model read the gel for it |
+| `-T image_judge_model=` | `openai/gpt-5` | the vision model used by `qc_tools=image_judge`. A dedicated reader rather than the model under test, so the reading does not vary with the agent being evaluated. Its reading is scored by `qc_quality`, so a misreading judge shows up as a judge failure rather than an agent that decided badly. The default needs `OPENAI_API_KEY` |
 | `-T human=` | `auto` | `auto` is a scripted technician; `cli` pauses for a real person to type what they did, which an LLM judge turns into a lab effect. Use `--max-samples 1` |
 | `-T backend=` | `sim` | `flex` raises `NotImplementedError` |
 | `-T enable_python=` | false | give the agent a Python tool for arithmetic (needs a sandbox) |
