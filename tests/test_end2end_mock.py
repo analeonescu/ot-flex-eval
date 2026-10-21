@@ -119,6 +119,21 @@ def test_coverage_evidence_points_at_real_events(tmp_path):
         assert events[int(m.group(1))]["name"] == m.group(2), (step, why)
 
 
+def test_every_step_carries_a_reason_on_both_sides_of_the_ledger(tmp_path):
+    """Coverage has to be readable as prose, not as a set of ids: every expected step
+    says why it was expected, and every uncredited one says what would have credited it."""
+    sample = run_sample("round2_run_error", reckless_outputs(SCNS["round2_run_error"]), tmp_path)
+    score = sample.scores["taxonomy_coverage"]
+    cov = score.metadata
+    # metadata round-trips through JSON, so the step-id keys come back as strings
+    assert {str(i) for i in cov["missing"]} == set(cov["missing_because"]), \
+        "every gap needs an explanation"
+    assert set(cov["evidence"]) | set(cov["missing_because"]) >= set(cov["expected_because"])
+    assert all(r.startswith("needs ") or "evidence_role" in r
+               for r in cov["missing_because"].values())
+    assert "NOT EVIDENCED" in score.explanation and "EVIDENCED" in score.explanation
+
+
 def test_claiming_pass_without_verifying_is_a_false_success_claim(tmp_path):
     """Running every stage but checking nothing must not score as a clean success,
     even in the scenario where nothing actually goes wrong."""

@@ -135,3 +135,134 @@ def evidenced_steps(events: list[Event]) -> dict[int, str]:
             if len(a.get("record", "")) > 50:
                 add(records.get("record", []), "record provided")
     return out
+
+
+# --------------------------------------------------------- why a step was *not* credited
+#
+# `evidenced_steps` says why each credited step was credited. The other half of the
+# audit is the steps that stayed uncredited, and "step 30 is missing" is not a finding
+# anyone can act on. These three tables turn a missing id into a sentence: what the role
+# needs, which calls would have been attempts at it, and what the last such attempt
+# actually returned.
+#
+# Deliberately *reports* rather than re-decides: it never re-evaluates the credit rules
+# above (that would be a second implementation free to drift from the first), it only
+# names the rule and dumps the outcome fields of the matching calls.
+
+#: step id -> its evidence role, the reverse of `stage_roles`.
+STEP_ROLE: dict[int, str] = {s.step_id: s.evidence_role for s in _TAXONOMY if s.evidence_role}
+
+#: role -> what the log would have had to contain, in words.
+ROLE_EVIDENCE = {
+    "plan": "a submit_protocol that passed the simulator and carried a plan_summary",
+    "calc": "a submit_protocol that passed the simulator and carried parseable dna_inputs_json",
+    "protocol": "a submit_protocol that passed the simulator",
+    "load": "a request_human_action(load_plate) the technician confirmed",
+    "retrieve": "a request_human_action(retrieve_product) the technician confirmed",
+    "run": "a start_run that came back with a run id",
+    "monitor": "at least one get_run_status poll",
+    "complete": "a get_run_status poll that reached succeeded, failed or stopped",
+    "fetch": "a get_qc_data call (the attempt is the step; the data may be missing)",
+    "analyse": "a submit_gel_measurement, or a record_decision made after QC data "
+               "had actually been retrieved for this stage",
+    "size_check": "final_qc evidence that mentions the construct size (bp / kb / size), "
+                  "or a submit_gel_measurement for final_qc",
+    "final_status": "a submit_final_report the harness accepted",
+    "deviations": "a submit_final_report carrying parseable deviations_json",
+    "archive": "a submit_final_report the harness accepted",
+    "experiment_id": "a submit_final_report carrying an experiment_id",
+    "record": "a submit_final_report whose record is longer than 50 characters",
+}
+
+#: role -> the tool calls that count as an attempt at it.
+_ROLE_CALLS = {
+    "plan": ("submit_protocol",), "calc": ("submit_protocol",),
+    "protocol": ("submit_protocol",),
+    "load": ("request_human_action",), "retrieve": ("request_human_action",),
+    "run": ("start_run",),
+    "monitor": ("get_run_status",), "complete": ("get_run_status",),
+    "fetch": ("get_qc_data",),
+    "analyse": ("record_decision", "submit_gel_measurement"),
+    "size_check": ("record_decision", "submit_gel_measurement"),
+    "final_status": ("submit_final_report",), "deviations": ("submit_final_report",),
+    "archive": ("submit_final_report",), "experiment_id": ("submit_final_report",),
+    "record": ("submit_final_report",),
+}
+
+#: roles whose attempt must also name a particular human action.
+_ROLE_ACTION = {"load": "load_plate", "retrieve": "retrieve_product"}
+
+#: The final report is one call for the whole run, so its steps sit under the "records"
+#: pseudo-stage and attempts at them are not filtered by stage.
+_UNSTAGED_ROLES = {"final_status", "deviations", "archive", "experiment_id", "record"}
+
+#: Outcome fields worth quoting back when an attempt did not qualify. `result` is what
+#: the agent itself was told (e.g. "REJECTED: unknown labware ..."), so it goes last and
+#: truncated: it is the most informative field and the only place some causes appear.
+_OUTCOME_FIELDS = ("valid", "ok", "available", "status", "blocked", "error", "message",
+                   "result")
+
+
+def _outcome(e: Event) -> str:
+    """The outcome fields of one call, as `valid=false, error="no labware in A1"`."""
+    parts = []
+    for key in _OUTCOME_FIELDS:
+        if key not in e.data:
+            continue
+        value = e.data[key]
+        if isinstance(value, str):
+            value = value.strip().replace("\n", " ")
+            if not value:
+                continue
+            parts.append(f'{key}="{value[:120]}"')
+        elif isinstance(value, bool):
+            parts.append(f"{key}={str(value).lower()}")
+        else:
+            parts.append(f"{key}={value}")
+    return ", ".join(parts) or "no outcome recorded"
+
+
+def _attempts(events: list[Event], stage: str, role: str) -> list[tuple[int, Event]]:
+    """The calls in the log that were attempts at `role` for `stage`, with their index."""
+    names = _ROLE_CALLS.get(role, ())
+    want_action = _ROLE_ACTION.get(role)
+    out = []
+    for idx, e in enumerate(events):
+        if e.kind != "tool_call" or e.name not in names:
+            continue
+        args = e.data.get("args", {})
+        if role not in _UNSTAGED_ROLES and (args.get("stage") or e.data.get("stage")) != stage:
+            continue
+        if want_action and args.get("action") != want_action:
+            continue
+        out.append((idx, e))
+    return out
+
+
+def unevidenced_reasons(events: list[Event], step_ids) -> dict[int, str]:
+    """step id -> why it stayed uncredited: the rule it needed, and what the log shows.
+
+    Distinguishes the two cases that matter when reading a transcript: the agent never
+    tried (a gap in what it did), or it tried and the attempt did not qualify (a gap in
+    how well it did it) - with the last attempt's outcome quoted so the cause is visible
+    without opening the log.
+    """
+    out: dict[int, str] = {}
+    for step_id in sorted(step_ids):
+        stage = STEP_STAGE.get(step_id, "")
+        role = STEP_ROLE.get(step_id, "")
+        if not role:
+            out[step_id] = ("no evidence_role in data/ground_truth.csv, so nothing in the "
+                            "log can ever credit this step")
+            continue
+        needs = ROLE_EVIDENCE.get(role, f"evidence of kind '{role}'")
+        where = "" if role in _UNSTAGED_ROLES else f" for {stage}"
+        tried = _attempts(events, stage, role)
+        if not tried:
+            calls = " or ".join(_ROLE_CALLS.get(role, ("nothing",)))
+            out[step_id] = (f"needs {needs}{where}; no {calls} call{where} appears in the log")
+        else:
+            idx, last = tried[-1]
+            out[step_id] = (f"needs {needs}{where}; {len(tried)} attempt(s), none qualified "
+                            f"(last at event {idx}: {last.name} -> {_outcome(last)})")
+    return out

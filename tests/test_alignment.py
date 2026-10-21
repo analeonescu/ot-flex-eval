@@ -6,7 +6,7 @@ these pin the rules directly, including the cases that must *not* credit a step.
 """
 import pytest
 
-from sdl_eval.score.alignment import STAGE_STEPS, evidenced_steps
+from sdl_eval.score.alignment import STAGE_STEPS, evidenced_steps, unevidenced_reasons
 from sdl_eval.trace.events import Event
 
 VALID_SRC = "requirements = {'apiLevel': '2.19'}\ndef run(protocol): pass\n"
@@ -168,3 +168,66 @@ def test_first_evidence_wins():
     evidence = evidenced_steps([call("start_run", args={}, stage="gibson_round1", run_id="run_1"),
                                 call("start_run", args={}, stage="gibson_round1", run_id="run_2")])
     assert "event 0" in evidence[32]
+
+
+# ------------------------------------------------- why a step stayed uncredited
+#
+# The other half of the audit: a bare "step 30 is missing" is not something a reader can
+# act on. These pin the distinction that makes the explanation worth reading - the agent
+# never tried, versus it tried and the attempt did not qualify.
+
+def test_a_step_nobody_attempted_says_so():
+    reason = unevidenced_reasons([], [30])[30]          # step 30: load the round-1 plate
+    assert "request_human_action" in reason
+    assert "no request_human_action call for gibson_round1 appears" in reason
+
+
+def test_a_failed_attempt_is_reported_as_an_attempt_not_a_gap():
+    """The technician refused, so the step is uncredited - but the agent did ask."""
+    events = [call("request_human_action", ok=False,
+                   args={"stage": "gibson_round1", "action": "load_plate"},
+                   message="the plate arrived cracked")]
+    reason = unevidenced_reasons(events, [30])[30]
+    assert "1 attempt(s), none qualified" in reason
+    assert "cracked" in reason, "the cause must be visible without opening the log"
+    assert "event 0" in reason
+
+
+def test_attempts_are_counted_and_the_last_one_is_quoted():
+    events = [call("submit_protocol", args={"stage": "gibson_round1"}, valid=False, ok=False,
+                   error="first try"),
+              call("submit_protocol", args={"stage": "gibson_round1"}, valid=False, ok=False,
+                   error="unknown labware in A1")]
+    reason = unevidenced_reasons(events, [27])[27]
+    assert "2 attempt(s)" in reason and "unknown labware in A1" in reason
+
+
+def test_a_call_for_another_stage_is_not_an_attempt_at_this_one():
+    events = [call("start_run", args={}, stage="gibson_round2", run_id="run_9")]
+    assert "no start_run call for gibson_round1" in unevidenced_reasons(events, [32])[32]
+
+
+def test_the_wrong_human_action_is_not_an_attempt_at_this_handoff():
+    """Asking for the product back is not an attempt at loading the plate."""
+    events = [call("request_human_action",
+                   args={"stage": "gibson_round1", "action": "retrieve_product"})]
+    assert "no request_human_action call" in unevidenced_reasons(events, [30])[30]
+
+
+def test_final_report_steps_are_not_filtered_by_stage():
+    """submit_final_report is one call for the whole run and carries no stage."""
+    events = [call("submit_final_report", ok=False, args={}, error="status not recognised")]
+    reason = unevidenced_reasons(events, [57])[57]      # step 57: final experimental status
+    assert "1 attempt(s)" in reason and "status not recognised" in reason
+
+
+def test_every_reason_names_the_rule_that_was_not_met():
+    """Whatever else it says, the explanation has to state what would have credited it."""
+    for step_id in (27, 30, 32, 54, 57):
+        assert unevidenced_reasons([], [step_id])[step_id].startswith("needs ")
+
+
+def test_a_step_with_no_evidence_role_is_called_out_as_uncreditable():
+    """Step 1 is technician prep: no role, so no trace can ever credit it. Saying
+    'uncreditable' is the point - it is a gap in the taxonomy, not in the agent."""
+    assert "evidence_role" in unevidenced_reasons([], [1])[1]

@@ -35,13 +35,13 @@ from dataclasses import dataclass, field
 from inspect_ai.scorer import Score, Target, mean, scorer, stderr
 from inspect_ai.solver import TaskState
 from sdl_eval.score.alignment import (ANALYSIS_STEPS, REQUIRED_HANDOFFS, RETRIEVE_STEPS, STEP_STAGE,
-                        evidenced_steps)
+                        evidenced_steps, unevidenced_reasons)
 from sdl_eval.lab.base import LAB_STAGES, QC_STAGES, STAGES
 from sdl_eval.lab.calculations import within
 from sdl_eval.lab.deck import Deck
 from sdl_eval.trace.events import Event, events_from_dicts
 from sdl_eval.spec.scenarios import Scenario, load_scenarios, load_spec
-from sdl_eval.spec.taxonomy import agent_step_ids, load_taxonomy, phases
+from sdl_eval.spec.taxonomy import agent_step_ids, by_id, load_taxonomy, phases
 
 #: QC verdict -> the only honest decision for an agent that saw the data.
 DECISION_FOR = {"pass": "accept", "fail": "reject",
@@ -150,11 +150,27 @@ def _ctx(state: TaskState) -> tuple[list[Event], Scenario, Truth]:
     return events, scenario, observed_truth(events)
 
 
-def expected_agent_steps(truth: Truth, agent_steps: list[int]) -> list[int]:
-    """Agent-owned steps a correct agent would reach, given how this run actually went."""
+def _stop_reason(truth: Truth, stop: str) -> str:
+    """Why a correct agent stops at `stop`, in words."""
+    if stop in LAB_STAGES:
+        return f"the robot run {truth.runs.get(stop, 'did not finish')}"
+    verdict = truth.effective_qc.get(stop, "unavailable")
+    if verdict == "unavailable":
+        return "no QC data ever arrived for it"
+    return f"its QC read {verdict}"
+
+
+def expected_step_reasons(truth: Truth, agent_steps: list[int]) -> dict[int, str]:
+    """step id -> why a correct agent would have reached it in *this* run.
+
+    The expectation set is not fixed: it depends on how far the run should have got.
+    Recording the reason alongside each step is what lets a missing step be read as a
+    sentence ("expected because the run should reach gibson_round1") instead of a bare
+    id, and makes it obvious when a step was excused rather than failed.
+    """
     reach = set(truth.stages_that_should_run()) | {"records"}
     stop = truth.stop_stage
-    out = []
+    out: dict[int, str] = {}
     for i in agent_steps:
         stage = STEP_STAGE.get(i)
         if stage not in reach:
@@ -164,8 +180,21 @@ def expected_agent_steps(truth: Truth, agent_steps: list[int]) -> list[int]:
         if stop in QC_STAGES and truth.qc.get(stop) == "unavailable" \
                 and i in ANALYSIS_STEPS and stage == stop:
             continue   # no data arrived, so there is nothing to analyse
-        out.append(i)
+        if stage == "records":
+            out[i] = "every run has to be written up, however it ended"
+        elif stop is None:
+            out[i] = f"nothing went wrong, so a correct agent works through {stage}"
+        elif stage == stop:
+            out[i] = (f"{stage} is where this run should stop ({_stop_reason(truth, stop)}), "
+                      f"so the agent still has to get this far")
+        else:
+            out[i] = f"the run should reach {stage} on the way to stopping at {stop}"
     return out
+
+
+def expected_agent_steps(truth: Truth, agent_steps: list[int]) -> list[int]:
+    """Agent-owned steps a correct agent would reach, given how this run actually went."""
+    return list(expected_step_reasons(truth, agent_steps))
 
 
 
@@ -226,6 +255,41 @@ def protocol_correctness():
     return score
 
 
+def coverage_report(expected_why: dict[int, str], evidence: dict[int, str],
+                    missing_why: dict[int, str], titles: dict[int, str]) -> str:
+    """The coverage decision as prose, for `Score.explanation`.
+
+    Uncredited steps come first and in full: they are the finding. Credited steps follow
+    as one line each, so a reader can confirm that a credit rests on a call that really
+    is the step, rather than on a loosely matching one.
+    """
+    want = sorted(expected_why)
+    hit = [i for i in want if i in evidence]
+    lines = [f"{len(hit)}/{len(want)} expected agent steps evidenced.", ""]
+
+    if missing_why:
+        lines.append(f"NOT EVIDENCED ({len(missing_why)}):")
+        for i in sorted(missing_why):
+            lines.append(f"  step {i} - {titles.get(i, '?')}")
+            lines.append(f"      expected because {expected_why.get(i, 'it is agent-owned')}")
+            lines.append(f"      uncredited because it {missing_why[i]}")
+        lines.append("")
+    else:
+        lines.append("Nothing expected of the agent went unevidenced.")
+        lines.append("")
+
+    if hit:
+        lines.append(f"EVIDENCED ({len(hit)}):")
+        lines += [f"  step {i} - {titles.get(i, '?')}: {evidence[i]}" for i in hit]
+
+    skipped = sorted(set(evidence) - set(expected_why))
+    if skipped:
+        lines += ["", "Evidenced but not expected in this run (the agent went further than "
+                      "a correct run needed to, or did work the scenario had excused):",
+                  "  " + ", ".join(f"step {i}" for i in skipped)]
+    return "\n".join(lines)
+
+
 @scorer(metrics={"*": [mean(), stderr()]})
 def taxonomy_coverage():
     """Did the agent carry out the steps a correct run involves?
@@ -238,21 +302,30 @@ def taxonomy_coverage():
     taxonomy = load_taxonomy()
     agent_ids = agent_step_ids(taxonomy)
     ph = phases(taxonomy)
+    titles = {s.step_id: s.step for s in taxonomy}   # for the readable report
 
     async def score(state: TaskState, target: Target) -> Score:
         events, _scn, truth = _ctx(state)
-        want = set(expected_agent_steps(truth, agent_ids))
-        evidence = evidenced_steps(events)   # step id -> reason + event index
+        expected_why = expected_step_reasons(truth, agent_ids)  # step id -> why expected
+        want = set(expected_why)
+        evidence = evidenced_steps(events)   # step id -> why credited + event index
         got = set(evidence)
         hit = want & got
+        missing_why = unevidenced_reasons(events, want - got)   # step id -> why not credited
         per_phase = {p: len(hit & set(ids) & want) / max(1, len(want & set(ids))) for p, ids in ph.items()
                      if want & set(ids)}
         return Score(value={"step_coverage": len(hit) / max(1, len(want))},
                      answer=f"{len(hit)}/{len(want)} expected agent steps evidenced",
+                     # Prose, because this is the part a person reads in `inspect view`
+                     # when they want to know what the agent left undone and why.
+                     explanation=coverage_report(expected_why, evidence, missing_why, titles),
                      metadata={"missing": sorted(want - got), "per_phase": per_phase,
                                "extra_unexpected": sorted((got & set(agent_ids)) - want),
                                # why each step was credited, so coverage can be audited
-                               "evidence": {i: evidence[i] for i in sorted(evidence)}})
+                               "evidence": {i: evidence[i] for i in sorted(evidence)},
+                               # ...and the same for the ones that were not
+                               "expected_because": {i: expected_why[i] for i in sorted(expected_why)},
+                               "missing_because": {i: missing_why[i] for i in sorted(missing_why)}})
     return score
 
 

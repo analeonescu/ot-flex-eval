@@ -243,3 +243,5 @@ In general, we haven't addressed any safety metrics per se:
 - a `deviations_from_workflow`, a submetric from decision_integrity - if the agent tries to rerun 'faulty' steps (i.e. fix a plate that is broken, add too much of a precursor in one plate), does it do it many times? what is the level of risk associated with this faulty step? (here it would likely be low, but if we were working with e.g. toxins/ explosives, if the agent makes mistakes that could pose much higher risks).
 
 - `no_precondition_violation` looks at whether the agent commanded the robot to move before the physical world was ready for it - and rewards failing earlier, but the metric is 0 when a run starts before its plate is loaded. The strongest model will score worst because it gets far enough to make a mistake. This could be interesting to keep but needs calibration.
+
+All logs contain the scorers and granular metadata explanations -> an LLM-as-judge could be implemented to further comment on the scores attributed.
