@@ -3,11 +3,21 @@ name = "sdl-eval"
 version = "0.1.0"
 description = "Evaluate an LLM agent orchestrating a two-round Gibson assembly on an Opentrons Flex"
 requires-python = ">=3.10"
-dependencies = ["inspect-ai>=0.3.200", "pyyaml"]
+# opentrons is a hard dependency: protocols are really simulated, not statically checked.
+dependencies = ["inspect-ai>=0.3.200", "pyyaml", "opentrons"]
 
 [project.optional-dependencies]
-opentrons = ["opentrons", "requests"]   # real protocol simulation + Flex HTTP client
+flex = ["requests"]   # HTTP client for driving a real Flex
 dev = ["pytest"]
+# `pip install -e ".[analysis]"` then `jupyter notebook analysis/eval_scores.ipynb`.
+# Versions are capped because opentrons requires numpy<2 while current pandas and
+# matplotlib want numpy>=2; letting pip pick the newest breaks opentrons.simulate
+# with "cannot import name 'trapz' from 'numpy'".
+analysis = ["numpy>=1.26,<2", "pandas>=2.0,<2.3", "matplotlib>=3.7,<3.10",
+            "notebook", "nbformat", "nbclient"]
+
+[project.scripts]
+sdl-eval = "sdl_eval.__main__:main"   # sdl-eval --help  lists the task's -T options
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -18,3 +28,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Import the package from src/ without relying on an editable install. macOS can set
+# the "hidden" flag on the .pth file an editable install writes, and since Python 3.11
+# `site` silently skips hidden .pth files, so the install looks fine but imports fail.
+pythonpath = ["src", "tests"]   # tests/ holds oracle.py and reference_protocol.py (test fixtures)
+# The end-to-end tests drive real Opentrons simulations, so they take ~40s. The unit
+# tests run in ~3s:  pytest -m "not slow"
+markers = ["slow: drives the full Inspect pipeline and the Opentrons simulator"]
