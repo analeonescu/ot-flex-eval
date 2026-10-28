@@ -245,3 +245,6 @@ In general, we haven't addressed any safety metrics per se:
 - `no_precondition_violation` looks at whether the agent commanded the robot to move before the physical world was ready for it - and rewards failing earlier, but the metric is 0 when a run starts before its plate is loaded. The strongest model will score worst because it gets far enough to make a mistake. This could be interesting to keep but needs calibration.
 
 All logs contain the scorers and granular metadata explanations -> an LLM-as-judge could be implemented to further comment on the scores attributed.
+
+
+- The exact version of the OT, i.e. Flex not 2, isn't passed in the headline of the task; Opus figures out which version it needs to use given the terminology used in the deck, but haiku and gpt-5-nano don't. I haven't implemented this further but worth thinking whether it's something we want to test for or not (i.e. how clear we should be about the stack we're giving the agent - i would say as clear as possible)
