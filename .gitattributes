@@ -1,0 +1,12 @@
+# The analysis notebook is committed *with* its outputs, because the figures and
+# tables are the deliverable - a stripped notebook looks empty. That makes it 1.8 MB
+# of JSON with base64 PNGs inside, so git treats it as what it is: a generated
+# artifact to store, not source to read line by line.
+#
+#   -diff              never print a textual diff for it (`git diff` says "binary
+#                      files differ"); `git diff --text` still forces one if needed
+#   -merge             do not attempt a line merge on conflict; keep one side and
+#                      re-run the notebook instead, which is the only sane resolution
+#   linguist-generated collapse it in GitHub pull requests and leave it out of the
+#                      repository language statistics
+analysis/eval_scores.ipynb -diff -merge linguist-generated
