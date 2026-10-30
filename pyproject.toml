@@ -9,12 +9,20 @@ dependencies = ["inspect-ai>=0.3.200", "pyyaml", "opentrons"]
 [project.optional-dependencies]
 flex = ["requests"]   # HTTP client for driving a real Flex
 dev = ["pytest"]
-# `pip install -e ".[analysis]"` then `jupyter notebook analysis/eval_scores.ipynb`.
-# Versions are capped because opentrons requires numpy<2 while current pandas and
-# matplotlib want numpy>=2; letting pip pick the newest breaks opentrons.simulate
-# with "cannot import name 'trapz' from 'numpy'".
+# `pip install -e ".[analysis]"`, then open analysis/eval_scores.ipynb in VS Code, or
+# run `python analysis/eval_app.py` for the step-by-step replay of each sample.
+#
+# Pinned around opentrons, which needs numpy<2 and jsonschema<4.18:
+#   numpy / pandas / matplotlib / contourpy  newer releases want numpy>=2, which
+#       breaks opentrons.simulate ("cannot import name 'trapz' from 'numpy'")
+#   ipykernel, not `notebook`  the Jupyter server pulls in jupyter_events, which needs
+#       jsonschema>=4.18. That can never sit beside opentrons, so pip backtracks
+#       through every opentrons release down to 4.0 and fails building urwid.
+#       ipykernel is all VS Code and nbclient need; for browser Jupyter, run it from
+#       a separate environment and pick this venv's kernel.
+#   dash<4  keeps the app on the 3.x API it was written against.
 analysis = ["numpy>=1.26,<2", "pandas>=2.0,<2.3", "matplotlib>=3.7,<3.10",
-            "notebook", "nbformat", "nbclient"]
+            "contourpy<1.4", "ipykernel", "nbformat", "nbclient", "dash>=3.0,<4"]
 
 [project.scripts]
 sdl-eval = "sdl_eval.__main__:main"   # sdl-eval --help  lists the task's -T options
